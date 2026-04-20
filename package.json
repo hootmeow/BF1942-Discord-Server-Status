@@ -1,0 +1,15 @@
+{
+  "name": "bf1942-discord-server-status",
+  "version": "1.0.0",
+  "description": "BF1942 live server status bot for Discord",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "pg": "^8.12.0",
+    "dotenv": "^16.4.5"
+  }
+}
