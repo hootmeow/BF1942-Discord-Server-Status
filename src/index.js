@@ -1,115 +1,131 @@
 require('dotenv').config();
 
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
-const { testConnection, fetchServers, getAllMonitors, updateMonitorMessage } = require('./database');
+const {
+  testConnection, fetchServers, fetchLivePlayers, fetchLiveSnapshot,
+  findServerByAddress, upsertMonitor, updateMonitorMessage,
+} = require('./database');
 const { buildStatusEmbed, buildErrorEmbed, buildPresenceText } = require('./embed');
-const { registerCommands } = require('./commands');
-const { createInteractionHandler } = require('./interactions');
 
 // ── Env validation ────────────────────────────────────────────────────────────
 
-const REQUIRED_ENV = ['DISCORD_TOKEN', 'DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'];
+const REQUIRED_ENV = [
+  'DISCORD_TOKEN',
+  'DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASSWORD',
+  'BF1942_SERVER_ADDRESS', 'BF1942_CHANNEL_ID',
+];
 for (const key of REQUIRED_ENV) {
   if (!process.env[key]) { console.error(`[CONFIG] Missing env var: ${key}`); process.exit(1); }
 }
 
-const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '60000');
+const POLL_INTERVAL_MS   = parseInt(process.env.POLL_INTERVAL_MS || '60000');
+const SERVER_ADDRESS     = process.env.BF1942_SERVER_ADDRESS;
+const CHANNEL_ID         = process.env.BF1942_CHANNEL_ID;
+const LABEL_OVERRIDE     = process.env.BF1942_LABEL || null;
 
 // ── Discord client ────────────────────────────────────────────────────────────
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// monitorCache: Map<channelId, { row: dbRow, message: Message|null, busy: boolean }>
-const monitorCache = new Map();
+// Single-monitor state: one bot instance = one server + one channel.
+const monitor = { row: null, message: null, busy: false };
 
-// ── Per-entry helpers ─────────────────────────────────────────────────────────
+// ── Poll / render ─────────────────────────────────────────────────────────────
 
-async function ensureMessage(channelId) {
-  const entry = monitorCache.get(channelId);
-  if (!entry || entry.message) return;
+async function ensureMessage() {
+  if (!monitor.row || monitor.message) return;
 
-  const channel = await client.channels.fetch(channelId).catch(() => null);
+  const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
   if (!channel?.isTextBased()) return;
 
-  if (entry.row.message_id) {
+  if (monitor.row.message_id) {
     try {
-      entry.message = await channel.messages.fetch(entry.row.message_id);
+      monitor.message = await channel.messages.fetch(monitor.row.message_id);
       return;
     } catch {
-      // Message is gone — fall through to send a new one
+      // Previous message was deleted; fall through to send a new one.
     }
   }
 
-  let embed;
-  try {
-    const servers = await fetchServers(entry.row.server_ids ?? []);
-    embed = buildStatusEmbed(servers, entry.row.label);
-  } catch (err) {
-    embed = buildErrorEmbed(entry.row.label, err.message);
-  }
-
-  entry.message = await channel.send({ embeds: [embed] });
-  await updateMonitorMessage(channelId, entry.message.id);
-  entry.row.message_id = entry.message.id;
-  console.log(`[${channelId}] Sent new status message (${entry.message.id})`);
+  monitor.message = await channel.send({ embeds: [await buildCurrentEmbed()] });
+  await updateMonitorMessage(CHANNEL_ID, monitor.message.id);
+  monitor.row.message_id = monitor.message.id;
+  console.log(`[BOT] Sent new status message (${monitor.message.id})`);
 }
 
-async function updateEntry(channelId) {
-  const entry = monitorCache.get(channelId);
-  if (!entry || entry.busy || !entry.message) return null;
-  entry.busy = true;
-
-  let servers = [];
-  let embed;
-
+async function buildCurrentEmbed() {
+  const serverIds = monitor.row.server_ids ?? [];
   try {
-    servers = await fetchServers(entry.row.server_ids ?? []);
-    embed = buildStatusEmbed(servers, entry.row.label);
+    const servers = await fetchServers(serverIds);
+    const s = servers[0] ?? null;
+    const [players, snapshot] = s
+      ? await Promise.all([fetchLivePlayers(s.ip, s.port), fetchLiveSnapshot(s.ip, s.port)])
+      : [[], null];
+    return buildStatusEmbed(servers, monitor.row.label, serverIds, players, snapshot);
   } catch (err) {
-    console.error(`[${channelId}] DB error: ${err.message}`);
-    embed = buildErrorEmbed(entry.row.label, err.message);
+    console.error('[DB]', err.message);
+    return buildErrorEmbed(monitor.row.label, err.message);
   }
+}
+
+async function tick() {
+  await ensureMessage();
+  if (!monitor.message || monitor.busy) return;
+  monitor.busy = true;
+
+  const embed = await buildCurrentEmbed();
 
   try {
-    await entry.message.edit({ embeds: [embed] });
+    await monitor.message.edit({ embeds: [embed] });
   } catch (err) {
     if (err.code === 10008) {
-      // Message deleted externally — will recreate on next poll
-      console.warn(`[${channelId}] Status message deleted externally. Will recreate next tick.`);
-      entry.message = null;
-      await updateMonitorMessage(channelId, null);
+      console.warn('[BOT] Status message deleted externally; will recreate next tick.');
+      monitor.message = null;
+      monitor.row.message_id = null;
+      await updateMonitorMessage(CHANNEL_ID, null);
     } else if (err.code === 429) {
-      console.warn(`[${channelId}] Rate limited — skipping tick.`);
+      console.warn('[BOT] Rate limited — skipping tick.');
     } else {
-      console.error(`[${channelId}] Edit failed: ${err.message}`);
+      console.error('[BOT] Edit failed:', err.message);
     }
   }
 
-  entry.busy = false;
-  return servers;
-}
+  // Presence line reflects the monitored server.
+  try {
+    const servers = await fetchServers(monitor.row.server_ids ?? []);
+    client.user.setPresence({
+      activities: [{ name: buildPresenceText(servers), type: ActivityType.Watching }],
+      status: 'online',
+    });
+  } catch { /* non-fatal */ }
 
-// ── Poll loop ─────────────────────────────────────────────────────────────────
-
-async function pollAll() {
-  const channelIds = [...monitorCache.keys()];
-  await Promise.all(channelIds.map(ensureMessage));
-  const results = await Promise.all(channelIds.map(updateEntry));
-
-  const allServers = results.flat().filter(Boolean);
-  client.user.setPresence({
-    activities: [{ name: buildPresenceText(allServers), type: ActivityType.Watching }],
-    status: 'online',
-  });
-}
-
-// Triggered by slash commands after a filter change so the embed updates immediately.
-async function triggerUpdate(channelId) {
-  await ensureMessage(channelId);
-  await updateEntry(channelId);
+  monitor.busy = false;
 }
 
 // ── Ready ─────────────────────────────────────────────────────────────────────
+
+async function bootstrap() {
+  const [ip, portRaw] = SERVER_ADDRESS.split(':');
+  const port = parseInt(portRaw, 10);
+  if (!ip || !Number.isFinite(port)) {
+    throw new Error(`BF1942_SERVER_ADDRESS must be "ip:port" (got "${SERVER_ADDRESS}")`);
+  }
+
+  const server = await findServerByAddress(ip, port);
+  if (!server) {
+    throw new Error(`No server found in Postgres with address ${ip}:${port}. Is it blacklisted or not yet polled?`);
+  }
+
+  const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
+  if (!channel?.isTextBased()) {
+    throw new Error(`Channel ${CHANNEL_ID} not found or not text-based. Is the bot in that server?`);
+  }
+
+  const label = LABEL_OVERRIDE || server.current_server_name || `Server ${server.server_id}`;
+  monitor.row = await upsertMonitor(channel.guildId, CHANNEL_ID, label, [server.server_id]);
+
+  console.log(`[BOT] Pinned to ${ip}:${port} (server_id=${server.server_id}) in channel ${CHANNEL_ID}. Label: "${label}".`);
+}
 
 client.once('ready', async () => {
   console.log(`[BOT] Logged in as ${client.user.tag}`);
@@ -121,29 +137,17 @@ client.once('ready', async () => {
     console.warn('[DB] Initial check failed:', err.message, '— will retry on first poll.');
   }
 
-  // Register slash commands
   try {
-    await registerCommands(client.user.id, process.env.DISCORD_TOKEN);
+    await bootstrap();
   } catch (err) {
-    console.error('[CMD] Failed to register slash commands:', err.message);
+    console.error('[BOT]', err.message);
+    process.exit(1);
   }
 
-  // Load monitors from DB and populate cache
-  const monitors = await getAllMonitors().catch(() => []);
-  for (const row of monitors) {
-    monitorCache.set(row.channel_id, { row, message: null, busy: false });
-  }
-  console.log(`[BOT] Loaded ${monitors.length} monitor(s) from database.`);
-
-  await pollAll();
-  setInterval(pollAll, POLL_INTERVAL_MS);
+  await tick();
+  setInterval(tick, POLL_INTERVAL_MS);
   console.log(`[BOT] Polling every ${POLL_INTERVAL_MS / 1000}s. Ready.`);
 });
-
-// ── Interaction handling ──────────────────────────────────────────────────────
-
-const handleInteraction = createInteractionHandler(monitorCache, triggerUpdate);
-client.on('interactionCreate', handleInteraction);
 
 // ── Error handling ────────────────────────────────────────────────────────────
 
