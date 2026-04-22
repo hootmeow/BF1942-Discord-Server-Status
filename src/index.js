@@ -52,7 +52,8 @@ async function ensureMessage() {
     }
   }
 
-  monitor.message = await channel.send({ embeds: [await buildCurrentEmbed()] });
+  const { embed } = await buildCurrentEmbed();
+  monitor.message = await channel.send({ embeds: [embed] });
   await updateMonitorMessage(CHANNEL_ID, monitor.message.id);
   monitor.row.message_id = monitor.message.id;
   console.log(`[BOT] Sent new status message (${monitor.message.id})`);
@@ -133,7 +134,7 @@ async function bootstrap() {
   console.log(`[BOT] Pinned to ${ip}:${port} (server_id=${server.server_id}) in channel ${CHANNEL_ID}. Label: "${label}".`);
 }
 
-client.once('ready', async () => {
+client.once('clientReady', async () => {
   console.log(`[BOT] Logged in as ${client.user.tag}`);
 
   try {
