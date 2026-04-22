@@ -17,6 +17,33 @@ To change which server or channel a bot points at, edit its `.env` and restart.
 
 ---
 
+## Ubuntu Server Setup
+
+If you're starting from a fresh Ubuntu 22.04 / 24.04 box, install Node.js and clone the repo first.
+
+### Install Node.js 20 (LTS)
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+node --version   # should print v20.x.x
+```
+
+### Clone the repo
+
+```bash
+cd /opt
+sudo git clone https://github.com/hootmeow/BF1942-Discord-Server-Status.git bf1942-status
+sudo chown -R $USER:$USER /opt/bf1942-status
+cd /opt/bf1942-status
+npm install
+```
+
+> If you're running multiple bot instances, clone into separate directories:
+> `/opt/bf1942-status-us`, `/opt/bf1942-status-eu`, etc.
+
+---
+
 ## Step 1 — Create the Discord Bot Application
 
 1. Go to [https://discord.com/developers/applications](https://discord.com/developers/applications) → **New Application**.
@@ -131,7 +158,103 @@ WHERE host(ip) = '1.1.1.1';
 
 ## Step 7 — Run as a Background Service (Recommended)
 
-### PM2 (Linux / Mac / Windows)
+### systemd (Ubuntu / Debian — recommended)
+
+Create a service file. Replace `/opt/bf1942-status` with your actual install path and `ubuntu` with the user you want the process to run as (avoid `root`).
+
+```bash
+sudo nano /etc/systemd/system/bf1942-status.service
+```
+
+Paste the following:
+
+```ini
+[Unit]
+Description=BF1942 Discord Server Status Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/bf1942-status
+EnvironmentFile=/opt/bf1942-status/.env
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable bf1942-status
+sudo systemctl start bf1942-status
+```
+
+Check it's running:
+
+```bash
+sudo systemctl status bf1942-status
+```
+
+View live logs:
+
+```bash
+journalctl -u bf1942-status -f
+```
+
+To apply `.env` changes, restart the service:
+
+```bash
+sudo systemctl restart bf1942-status
+```
+
+#### Multiple instances with systemd
+
+Name each service file after the instance, e.g. `bf1942-status-eu.service`, `bf1942-status-us.service`. Each points to its own directory and `.env`:
+
+```ini
+# /etc/systemd/system/bf1942-status-eu.service
+[Unit]
+Description=BF1942 Discord Status Bot — EU
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/bf1942-status-eu
+EnvironmentFile=/opt/bf1942-status-eu/.env
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable bf1942-status-eu bf1942-status-us
+sudo systemctl start  bf1942-status-eu bf1942-status-us
+```
+
+Logs per instance:
+
+```bash
+journalctl -u bf1942-status-eu -f
+journalctl -u bf1942-status-us -f
+```
+
+---
+
+### PM2 (alternative — works on Linux, Mac, and Windows)
 
 ```bash
 npm install -g pm2
@@ -174,7 +297,9 @@ All instances share the same Postgres. The `discord_monitors` table is keyed by 
 
 ### Step C — Run each instance as its own service
 
-**PM2 (recommended):**
+See the **Multiple instances with systemd** section under Step 7 for the recommended approach on Ubuntu. Each instance gets its own `.service` file pointing to its own directory and `.env`.
+
+**PM2 alternative:**
 
 ```bash
 cd bots/bf1942-status-eu      && pm2 start src/index.js --name bf1942-eu
