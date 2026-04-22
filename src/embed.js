@@ -55,6 +55,15 @@ function buildPlayerBar(current, max) {
   return '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled) + `  ${current}/${max}`;
 }
 
+function fillColor(count, max) {
+  if (!max || count === 0) return 0x747f8d;
+  const pct = count / max;
+  if (pct <= 0.25) return 0xfee75c;
+  if (pct <= 0.50) return 0xf97316;
+  if (pct <= 0.75) return 0x3ba55d;
+  return 0x57f287;
+}
+
 
 function isSnapshotStale(snapshot) {
   if (!snapshot?.snapshot_time) return false;
@@ -129,12 +138,10 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
   const timeLeft = formatTimeRemaining(snapshot?.round_time_remain);
   const stale    = isSnapshotStale(snapshot);
 
-  // Header: status · gametype · time · 🔒 (if locked) · ⚠️ (if stale)
+  // Header: status · 🔒 (if locked) · ⚠️ (if stale)
   const headerBits = [`${isOnline ? '🟢' : '⚪'}  **${isOnline ? 'Online' : 'Empty'}**`];
-  if (gt)        headerBits.push(gt);
-  if (timeLeft)  headerBits.push(`⏱️  ${timeLeft}`);
-  if (locked)    headerBits.push('🔒  Password');
-  if (stale)     headerBits.push('⚠️  Stale data');
+  if (locked) headerBits.push('🔒  Password');
+  if (stale)  headerBits.push('⚠️  Stale data');
   const headerLine = headerBits.join('  ·  ');
 
   const alliedTickets = snapshot?.tickets1;
@@ -144,7 +151,7 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
     headerLine,
     '',
     `**${name}**`,
-    `📡  \`${joinAddr}\`   ·   🗺️  ${map}`,
+    `📡  \`${joinAddr}\``,
     '',
     `👥  \`${buildPlayerBar(count, max)}\``,
   ];
@@ -152,12 +159,20 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
   const serverUrl = `${BF1942_URL}/servers/${server.server_id}`;
 
   const embed = new EmbedBuilder()
-    .setColor(isOnline ? 0x57f287 : 0xfee75c)
+    .setColor(fillColor(count, max))
     .setTitle(title)
     .setURL(serverUrl)
     .setDescription(descLines.join('\n'))
-    .setFooter({ text: 'bf1942.online  ·  Last updated' })
+    .setFooter({ text: 'bf1942.online  ·  Last updated', iconURL: 'https://bf1942.online/favicon.ico' })
     .setTimestamp();
+
+  // Inline info fields: map, mode, time remaining
+  const infoFields = [
+    { name: '🗺️  Map',  value: map, inline: true },
+  ];
+  if (gt)       infoFields.push({ name: '⚔️  Mode',      value: gt,               inline: true });
+  if (timeLeft) infoFields.push({ name: '⏱️  Time left', value: timeLeft,          inline: true });
+  embed.addFields(infoFields);
 
   if (players && players.length > 0) {
     const allied = players.filter(p => p.team === 1);
