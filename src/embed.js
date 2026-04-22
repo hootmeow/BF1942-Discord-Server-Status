@@ -162,7 +162,7 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
     .setTitle(title)
     .setURL(serverUrl)
     .setDescription(descLines.join('\n'))
-    .setFooter({ text: 'bf1942.online  ·  Last updated', iconURL: 'https://bf1942.online/favicon.ico' })
+    .setFooter({ text: 'Powered by bf1942.online  ·  Last Update', iconURL: 'https://bf1942.online/favicon.ico' })
     .setTimestamp();
 
   // Inline info fields: map, mode, time remaining
