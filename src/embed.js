@@ -156,7 +156,7 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
     .setTitle(title)
     .setURL(serverUrl)
     .setDescription(descLines.join('\n'))
-    .setFooter({ text: 'Last updated' })
+    .setFooter({ text: 'bf1942.online  ·  Last updated' })
     .setTimestamp();
 
   if (players && players.length > 0) {
