@@ -139,7 +139,7 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
   const stale    = isSnapshotStale(snapshot);
 
   // Header: status · 🔒 (if locked) · ⚠️ (if stale)
-  const headerBits = [`${isOnline ? '🟢' : '⚪'}  **Server: ${isOnline ? 'Online' : 'Empty'}**`];
+  const headerBits = [`**Server:** ${isOnline ? '🟢' : '⚪'}  **${isOnline ? 'Online' : 'Empty'}**`];
   if (locked) headerBits.push('🔒  Password');
   if (stale)  headerBits.push('⚠️  Stale data');
   const headerLine = headerBits.join('  ·  ');
