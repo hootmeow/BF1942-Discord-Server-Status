@@ -83,12 +83,12 @@ function buildErrorEmbed(label, errorMessage) {
 function renderTeamScoreboard(teamPlayers) {
   if (teamPlayers.length === 0) return '```\n— no players —\n```';
 
-  const header = 'Player           Score   K   D  Ping';
-  const sep    = '────────────────────────────────────';
+  const header = 'Player                   Score   K   D  Ping';
+  const sep    = '────────────────────────────────────────────';
   const lines  = [header, sep];
 
   for (const p of teamPlayers) {
-    const name  = (p.player_name || '').slice(0, 16).padEnd(16);
+    const name  = (p.player_name || '').slice(0, 24).padEnd(24);
     const score = String(p.score ?? 0).padStart(5);
     const k     = String(p.kills  ?? 0).padStart(3);
     const d     = String(p.deaths ?? 0).padStart(3);
@@ -149,12 +149,14 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
     `👥  \`${buildPlayerBar(count, max)}\``,
   ];
 
+  const serverUrl = `${BF1942_URL}/servers/${server.server_id}`;
+
   const embed = new EmbedBuilder()
     .setColor(isOnline ? 0x57f287 : 0xfee75c)
     .setTitle(title)
-    .setURL(BF1942_URL)
+    .setURL(serverUrl)
     .setDescription(descLines.join('\n'))
-    .setFooter({ text: 'Powered by bf1942.online' })
+    .setFooter({ text: 'Last updated' })
     .setTimestamp();
 
   if (players && players.length > 0) {
