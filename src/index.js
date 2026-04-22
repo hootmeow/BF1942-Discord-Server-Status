@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const {
-  testConnection, fetchServers, fetchLivePlayers, fetchLiveSnapshot,
+  pool, testConnection, fetchServers, fetchLivePlayers, fetchLiveSnapshot,
   findServerByAddress, upsertMonitor, updateMonitorMessage,
 } = require('./database');
 const { buildStatusEmbed, buildErrorEmbed, buildPresenceText } = require('./embed');
@@ -18,10 +18,15 @@ for (const key of REQUIRED_ENV) {
   if (!process.env[key]) { console.error(`[CONFIG] Missing env var: ${key}`); process.exit(1); }
 }
 
-const POLL_INTERVAL_MS   = parseInt(process.env.POLL_INTERVAL_MS || '60000');
+const MIN_POLL_MS        = 15_000;
+const POLL_INTERVAL_MS   = Math.max(MIN_POLL_MS, parseInt(process.env.POLL_INTERVAL_MS || '60000'));
 const SERVER_ADDRESS     = process.env.BF1942_SERVER_ADDRESS;
 const CHANNEL_ID         = process.env.BF1942_CHANNEL_ID;
 const LABEL_OVERRIDE     = process.env.BF1942_LABEL || null;
+
+if (parseInt(process.env.POLL_INTERVAL_MS || '60000') < MIN_POLL_MS) {
+  console.warn(`[CONFIG] POLL_INTERVAL_MS is below the minimum (${MIN_POLL_MS}ms). Clamped to ${POLL_INTERVAL_MS}ms to avoid Discord rate limits.`);
+}
 
 // ── Discord client ────────────────────────────────────────────────────────────
 
@@ -61,10 +66,10 @@ async function buildCurrentEmbed() {
     const [players, snapshot] = s
       ? await Promise.all([fetchLivePlayers(s.ip, s.port), fetchLiveSnapshot(s.ip, s.port)])
       : [[], null];
-    return buildStatusEmbed(servers, monitor.row.label, serverIds, players, snapshot);
+    return { embed: buildStatusEmbed(servers, monitor.row.label, serverIds, players, snapshot), servers };
   } catch (err) {
     console.error('[DB]', err.message);
-    return buildErrorEmbed(monitor.row.label, err.message);
+    return { embed: buildErrorEmbed(monitor.row.label, err.message), servers: [] };
   }
 }
 
@@ -73,33 +78,34 @@ async function tick() {
   if (!monitor.message || monitor.busy) return;
   monitor.busy = true;
 
-  const embed = await buildCurrentEmbed();
-
   try {
-    await monitor.message.edit({ embeds: [embed] });
-  } catch (err) {
-    if (err.code === 10008) {
-      console.warn('[BOT] Status message deleted externally; will recreate next tick.');
-      monitor.message = null;
-      monitor.row.message_id = null;
-      await updateMonitorMessage(CHANNEL_ID, null);
-    } else if (err.code === 429) {
-      console.warn('[BOT] Rate limited — skipping tick.');
-    } else {
-      console.error('[BOT] Edit failed:', err.message);
+    const { embed, servers } = await buildCurrentEmbed();
+
+    try {
+      await monitor.message.edit({ embeds: [embed] });
+    } catch (err) {
+      if (err.code === 10008) {
+        console.warn('[BOT] Status message deleted externally; will recreate next tick.');
+        monitor.message = null;
+        monitor.row.message_id = null;
+        await updateMonitorMessage(CHANNEL_ID, null);
+      } else if (err.code === 429) {
+        console.warn('[BOT] Rate limited — skipping tick.');
+      } else {
+        console.error('[BOT] Edit failed:', err.message);
+      }
     }
+
+    // Reuse servers from this tick — no second DB fetch needed.
+    try {
+      client.user.setPresence({
+        activities: [{ name: buildPresenceText(servers), type: ActivityType.Watching }],
+        status: 'online',
+      });
+    } catch { /* non-fatal */ }
+  } finally {
+    monitor.busy = false;
   }
-
-  // Presence line reflects the monitored server.
-  try {
-    const servers = await fetchServers(monitor.row.server_ids ?? []);
-    client.user.setPresence({
-      activities: [{ name: buildPresenceText(servers), type: ActivityType.Watching }],
-      status: 'online',
-    });
-  } catch { /* non-fatal */ }
-
-  monitor.busy = false;
 }
 
 // ── Ready ─────────────────────────────────────────────────────────────────────
@@ -153,5 +159,17 @@ client.once('ready', async () => {
 
 client.on('error', (err) => console.error('[DISCORD] Client error:', err.message));
 process.on('unhandledRejection', (err) => console.error('[PROCESS] Unhandled rejection:', err));
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+
+async function shutdown(signal) {
+  console.log(`[BOT] ${signal} received — shutting down.`);
+  client.destroy();
+  await pool.end();
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
 
 client.login(process.env.DISCORD_TOKEN);

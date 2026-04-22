@@ -124,6 +124,7 @@ async function updateMonitorMessage(channelId, messageId) {
 }
 
 module.exports = {
+  pool,
   testConnection,
   fetchServers,
   fetchLivePlayers,
