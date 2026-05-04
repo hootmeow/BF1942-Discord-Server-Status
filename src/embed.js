@@ -186,9 +186,9 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
     };
 
     embed.addFields(
-      { name: fmtLabel('🔵', 'Allied', allied, alliedTickets),
+      { name: fmtLabel('🔴', 'Axis',   allied, alliedTickets),
         value: renderTeamScoreboard(allied), inline: false },
-      { name: fmtLabel('🔴', 'Axis',   axis,   axisTickets),
+      { name: fmtLabel('🔵', 'Allied', axis,   axisTickets),
         value: renderTeamScoreboard(axis),   inline: false },
     );
     if (other.length > 0) {
