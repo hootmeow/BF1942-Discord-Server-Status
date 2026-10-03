@@ -24,7 +24,7 @@ const MAP_DISPLAY = {
   'tobruk':               'Tobruk',
 };
 
-const BF1942_URL = 'https://bf1942.online';
+const BF1942_URL = 'https://captheflag.com/bf1942';
 const BAR_WIDTH  = 12;
 // The live poller refreshes snapshots ~every minute. If the newest row is
 // older than this, the poller is probably wedged — show a warning.
@@ -81,7 +81,7 @@ function buildErrorEmbed(label, errorMessage) {
     .setDescription(
       `The stats database could not be reached.\n\`\`\`${errorMessage}\`\`\`\nServer data will resume automatically when the connection is restored.`
     )
-    .setFooter({ text: 'Powered by bf1942.online' })
+    .setFooter({ text: 'Powered by captheflag.com' })
     .setTimestamp();
 }
 
@@ -122,7 +122,7 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
       .setTitle(title)
       .setURL(BF1942_URL)
       .setDescription('⚫  Server is currently offline or not found.')
-      .setFooter({ text: 'Powered by bf1942.online' })
+      .setFooter({ text: 'Powered by captheflag.com' })
       .setTimestamp();
   }
 
@@ -162,7 +162,7 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
     .setTitle(title)
     .setURL(serverUrl)
     .setDescription(descLines.join('\n'))
-    .setFooter({ text: 'Powered by bf1942.online  ·  Last Update', iconURL: 'https://bf1942.online/favicon.ico' })
+    .setFooter({ text: 'Powered by captheflag.com  ·  Last Update', iconURL: 'https://captheflag.com/favicon.ico' })
     .setTimestamp();
 
   // Inline info fields: map, mode, time remaining
