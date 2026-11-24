@@ -57,6 +57,17 @@ function buildPlayerBar(current, max) {
   return '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled) + `  ${current}/${max}`;
 }
 
+// How far through the round we are, from the round length (roundtime) and
+// time remaining. Same width as the player bar so the two line up.
+function buildRoundBar(snapshot) {
+  const total  = Number(snapshot?.roundtime);
+  const remain = Number(snapshot?.round_time_remain);
+  if (!(total > 0) || !(remain >= 0) || remain > total) return null;
+  const pct    = (total - remain) / total;
+  const filled = Math.round(pct * BAR_WIDTH);
+  return '▰'.repeat(filled) + '▱'.repeat(BAR_WIDTH - filled) + `  ${Math.round(pct * 100)}% · ${formatTimeRemaining(remain)} left`;
+}
+
 function fillColor(count, max) {
   if (!max || count === 0) return 0x747f8d;
   const pct = count / max;
@@ -337,6 +348,8 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
     '',
     `👥  \`${buildPlayerBar(count, max)}\``,
   ];
+  const progress = isOnline && !stale ? buildRoundBar(snapshot) : null;
+  if (progress) descLines.push(`⏱️  \`${progress}\``);
 
   const serverUrl = `${BF1942_URL}/servers/${server.server_id}`;
 
