@@ -6,7 +6,10 @@ const pool = new Pool({
   database: process.env.DB_NAME,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  max: 5,
+  // Shows up in pg_stat_activity so these connections can be told apart.
+  application_name: 'bf1942-discord-status',
+  // A tick runs at most 3 queries in parallel.
+  max: 3,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
 });
