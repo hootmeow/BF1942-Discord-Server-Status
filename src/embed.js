@@ -91,27 +91,41 @@ function buildErrorEmbed(label) {
 
 // ── Scoreboard rendering ──────────────────────────────────────────────────────
 
-// Fixed-width columns: Name(16) Score(5) K(3) D(3) Ping(4). Total ~39 chars —
-// fits comfortably on Discord mobile without wrapping.
+// Fixed-width columns: Name(24) Score(5) K(3) D(3) Ping(4), 44 chars a row.
+// Discord caps a field at 1024 chars; minus the ``` wrapper that leaves room
+// for about 21 rows, so a full 32-player team ends in a "+N more" line
+// instead of being cut mid-row.
+const FIELD_BODY_MAX = 1000;
+
 function renderTeamScoreboard(teamPlayers) {
   if (teamPlayers.length === 0) return '```\n— no players —\n```';
 
   const header = 'Player                   Score   K   D  Ping';
   const sep    = '────────────────────────────────────────────';
   const lines  = [header, sep];
+  let length   = header.length + 1 + sep.length;
 
-  for (const p of teamPlayers) {
+  for (let i = 0; i < teamPlayers.length; i++) {
+    const p     = teamPlayers[i];
     const name  = (p.player_name || '').slice(0, 24).padEnd(24);
     const score = String(p.score ?? 0).padStart(5);
     const k     = String(p.kills  ?? 0).padStart(3);
     const d     = String(p.deaths ?? 0).padStart(3);
     const ping  = String(p.ping   ?? 0).padStart(4);
-    lines.push(`${name} ${score} ${k} ${d}  ${ping}`);
+    const row   = `${name} ${score} ${k} ${d}  ${ping}`;
+
+    // Keep room for the "+N more" line whenever rows remain after this one.
+    const rest     = teamPlayers.length - i - 1;
+    const reserve  = rest > 0 ? `\n+${rest} more`.length : 0;
+    if (length + 1 + row.length + reserve > FIELD_BODY_MAX) {
+      lines.push(`+${teamPlayers.length - i} more`);
+      break;
+    }
+    lines.push(row);
+    length += 1 + row.length;
   }
 
-  let body = lines.join('\n');
-  if (body.length > 1000) body = body.slice(0, 997) + '...';
-  return '```\n' + body + '\n```';
+  return '```\n' + lines.join('\n') + '\n```';
 }
 
 // ── Bottom fields: last round, today ─────────────────────────────────────────
