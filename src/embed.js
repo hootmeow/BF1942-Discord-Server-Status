@@ -138,17 +138,17 @@ function buildBotOfflineEmbed(label) {
 
 // ── Scoreboard rendering ──────────────────────────────────────────────────────
 
-// Fixed-width columns: Name(24) Score(5) K(3) D(3) Ping(4), 44 chars a row.
-// Discord caps a field at 1024 chars; minus the ``` wrapper that leaves room
-// for about 21 rows, so a full 32-player team ends in a "+N more" line
+// Fixed-width columns: Rank(2) Name(24) Score(5) K(3) D(3) Ping(4), 47 chars
+// a row. Discord caps a field at 1024 chars; minus the ``` wrapper that leaves
+// room for about 20 rows, so a full 32-player team ends in a "+N more" line
 // instead of being cut mid-row.
 const FIELD_BODY_MAX = 1000;
 
 function renderTeamScoreboard(teamPlayers) {
   if (teamPlayers.length === 0) return '```\n— no players —\n```';
 
-  const header = 'Player                   Score   K   D  Ping';
-  const sep    = '────────────────────────────────────────────';
+  const header = ' # Player                   Score   K   D  Ping';
+  const sep    = '───────────────────────────────────────────────';
   const lines  = [header, sep];
   let length   = header.length + 1 + sep.length;
 
@@ -160,7 +160,9 @@ function renderTeamScoreboard(teamPlayers) {
     const k     = String(p.kills  ?? 0).padStart(3);
     const d     = String(p.deaths ?? 0).padStart(3);
     const ping  = String(p.ping   ?? 0).padStart(4);
-    const row   = `${name} ${score} ${k} ${d}  ${ping}`;
+    // Rank within the team; players arrive sorted by score.
+    const rank  = String(i + 1).padStart(2);
+    const row   = `${rank} ${name} ${score} ${k} ${d}  ${ping}`;
 
     // Keep room for the "+N more" line whenever rows remain after this one.
     const rest     = teamPlayers.length - i - 1;
