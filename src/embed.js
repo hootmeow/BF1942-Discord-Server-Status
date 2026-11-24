@@ -187,8 +187,9 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
   const joinAddr = joinPort ? `${server.ip}:${joinPort}` : server.ip;
   const isOnline = count > 0;
   const locked   = snapshot?.has_password === 1;
-  const timeLeft = formatTimeRemaining(snapshot?.round_time_remain);
   const stale    = isSnapshotStale(snapshot);
+  // A stale snapshot's clock is frozen; the ⚠️ header explains why it's gone.
+  const timeLeft = stale ? null : formatTimeRemaining(snapshot?.round_time_remain);
 
   // Header: status · 🔒 (if locked) · ⚠️ (if stale)
   const headerBits = [`**Server:** ${isOnline ? '🟢' : '⚪'}  **${isOnline ? 'Online' : 'Empty'}**`];
