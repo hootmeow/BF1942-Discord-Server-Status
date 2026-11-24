@@ -4,7 +4,7 @@ A Discord bot that posts a live status embed for a BF1942 game server — map, g
 
 ## ⚠️ Internal tool — not intended for public self-hosting
 
-This bot connects **directly** to the private Postgres database used by [bf1942.online](https://bf1942.online) (the `bf1942-stats-engine`). Without network access and credentials to that database, the bot cannot function — there is no public API mode.
+This bot connects **directly** to the private Postgres database used by [captheflag.com](https://captheflag.com/bf1942) (the `bf1942-stats-engine`). Without network access and credentials to that database, the bot cannot function — there is no public API mode.
 
 If you operate your own BF1942 stats collector with the same `servers`, `live_server_snapshot`, and `live_player_snapshot` table shapes, the bot will work against your DB too. Otherwise it's an internal-only deployment.
 
