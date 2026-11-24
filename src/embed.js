@@ -89,6 +89,53 @@ function buildErrorEmbed(label) {
     .setTimestamp();
 }
 
+// Discord timestamp markup, e.g. "2 hours ago" in each reader's own clock.
+function discordTime(value, style = 'R') {
+  return `<t:${Math.floor(new Date(value).getTime() / 1000)}:${style}>`;
+}
+
+// ── Offline cards ─────────────────────────────────────────────────────────────
+
+// Game server not ACTIVE/EMPTY. `last` is its servers row in any state (null
+// if the row is gone); the engine keeps the last map and player count.
+function buildServerOfflineEmbed(label, last) {
+  const lines = [];
+  if (!last) {
+    lines.push('⚫  Server not found in the stats database.');
+  } else if (last.is_blacklisted) {
+    lines.push('⚫  This server is no longer tracked.');
+  } else {
+    lines.push('⚫  **Server offline**');
+    const seen = [];
+    if (last.last_successful_poll) seen.push(`Last seen ${discordTime(last.last_successful_poll)}`);
+    if (last.current_map) seen.push(`on ${formatMap(last.current_map)}`);
+    if (last.current_player_count > 0) seen.push(plural(last.current_player_count, 'player'));
+    if (seen.length) lines.push('', seen.join(' · '));
+  }
+
+  return new EmbedBuilder()
+    .setColor(0x747f8d)
+    .setTitle(`🎖️  ${label}`)
+    .setURL(last ? `${BF1942_URL}/servers/${last.server_id}` : BF1942_URL)
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: 'Powered by captheflag.com  ·  Last Update', iconURL: FOOTER_ICON })
+    .setTimestamp();
+}
+
+// Posted on shutdown so a stopped bot doesn't leave a normal-looking embed
+// that is quietly out of date.
+function buildBotOfflineEmbed(label) {
+  return new EmbedBuilder()
+    .setColor(0x747f8d)
+    .setTitle(`🎖️  ${label}`)
+    .setURL(BF1942_URL)
+    .setDescription(
+      `⚠️  **Status bot offline** since ${discordTime(Date.now())}\n` +
+      'This message will update again when the bot is back.'
+    )
+    .setFooter({ text: 'Powered by captheflag.com', iconURL: FOOTER_ICON });
+}
+
 // ── Scoreboard rendering ──────────────────────────────────────────────────────
 
 // Fixed-width columns: Name(24) Score(5) K(3) D(3) Ping(4), 44 chars a row.
@@ -195,15 +242,7 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
   const title  = `🎖️  ${label}`;
   const server = servers[0] ?? null;
 
-  if (!server) {
-    return new EmbedBuilder()
-      .setColor(0x747f8d)
-      .setTitle(title)
-      .setURL(BF1942_URL)
-      .setDescription('⚫  Server is currently offline or not found.')
-      .setFooter({ text: 'Powered by captheflag.com' })
-      .setTimestamp();
-  }
+  if (!server) return buildServerOfflineEmbed(label, null);
 
   const count    = server.current_player_count ?? 0;
   const max      = server.current_max_players  ?? 0;
@@ -288,11 +327,14 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
 // Status card plus, when there's data for it, the summary card. The footer
 // and timestamp move to whichever card is last so they sit at the bottom.
 // extras: { lastRound, today: { peak, players, rounds }, todayLabel }; any may be missing.
-function buildStatusEmbeds(servers, label, serverIds = [], players = [], snapshot = null, extras = {}) {
-  const status = buildStatusEmbed(servers, label, serverIds, players, snapshot);
-  if (!servers[0]) return [status];
+// offline: the servers row (any state) when the server isn't ACTIVE/EMPTY.
+function buildStatusEmbeds(servers, label, serverIds = [], players = [], snapshot = null, extras = {}, offline = null) {
+  const online = servers[0] ?? null;
+  const status = online
+    ? buildStatusEmbed(servers, label, serverIds, players, snapshot)
+    : buildServerOfflineEmbed(label, offline);
 
-  const summary = buildSummaryEmbed(extras, servers[0].current_player_count ?? 0);
+  const summary = buildSummaryEmbed(extras, online?.current_player_count ?? 0);
   if (!summary) return [status];
 
   // .data holds API-shaped keys (icon_url); setFooter wants iconURL.
@@ -318,4 +360,4 @@ function buildPresenceText(servers, snapshot = null) {
     : `${players}/${max} · ${map}`;
 }
 
-module.exports = { buildStatusEmbeds, buildErrorEmbed, buildPresenceText };
+module.exports = { buildStatusEmbeds, buildErrorEmbed, buildBotOfflineEmbed, buildPresenceText };

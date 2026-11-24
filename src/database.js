@@ -93,6 +93,19 @@ async function fetchLiveSnapshot(serverIp, serverPort) {
   return rows[0] ?? null;
 }
 
+// The server row in any state, for the offline card. When a server goes
+// OFFLINE the engine keeps its last map and player count.
+async function fetchServerById(serverId) {
+  const { rows } = await pool.query(
+    `SELECT server_id, host(ip) AS ip, port, current_server_name, current_map,
+            current_player_count, current_state, is_blacklisted, last_successful_poll
+     FROM servers
+     WHERE server_id = $1`,
+    [serverId]
+  );
+  return rows[0] ?? null;
+}
+
 // Most recent finished round on the server plus its top scorer.
 // Uses idx_rounds_server_id_start_time; the MVP lookup hits the
 // round_player_stats primary key.
@@ -198,6 +211,7 @@ module.exports = {
   fetchServers,
   fetchLivePlayers,
   fetchLiveSnapshot,
+  fetchServerById,
   fetchLastRound,
   fetchTodayStats,
   findServerByAddress,

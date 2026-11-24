@@ -2,11 +2,11 @@ require('dotenv').config();
 
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const {
-  pool, testConnection, fetchServers, fetchLivePlayers, fetchLiveSnapshot,
+  pool, testConnection, fetchServers, fetchServerById, fetchLivePlayers, fetchLiveSnapshot,
   fetchLastRound, fetchTodayStats, findServerByAddress, upsertMonitor,
   updateMonitorMessage, ensureSchema, recordPeak,
 } = require('./database');
-const { buildStatusEmbeds, buildErrorEmbed, buildPresenceText } = require('./embed');
+const { buildStatusEmbeds, buildErrorEmbed, buildBotOfflineEmbed, buildPresenceText } = require('./embed');
 
 // ── Env validation ────────────────────────────────────────────────────────────
 
@@ -31,6 +31,10 @@ const LOGIN_RETRY_MS     = 5 * 60_000;
 // Unchanged embeds/presence are not re-sent, except this often so the
 // "Last Update" timestamp still moves on an empty server.
 const FORCE_REFRESH_MS   = 5 * 60_000;
+// Longest the Last round / Today card goes without being re-queried.
+const EXTRAS_TTL_MS      = 5 * 60_000;
+// How long shutdown waits for the "bot offline" edit before giving up.
+const SHUTDOWN_EDIT_MS   = 5_000;
 
 // Timezone for the "Today" line (when today's peak and counts reset).
 const STATS_TIMEZONE     = process.env.STATS_TIMEZONE || 'UTC';
@@ -64,7 +68,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const monitor = {
   row: null, messageId: null, busy: false, lastError: null,
   lastEmbed: null, lastEditAt: 0, lastPresence: null, lastPresenceAt: 0,
-  peakEnabled: false,
+  peakEnabled: false, extras: null, timer: null, shuttingDown: false,
 };
 
 // ── Poll / render ─────────────────────────────────────────────────────────────
@@ -86,6 +90,8 @@ async function publish(embeds) {
   }));
   const fresh = Date.now() - monitor.lastEditAt < FORCE_REFRESH_MS;
   if (monitor.messageId && fingerprint === monitor.lastEmbed && fresh) return;
+  // Don't overwrite the "bot offline" notice with a tick that was mid-flight.
+  if (monitor.shuttingDown) return;
 
   const channel = await fetchChannel();
 
@@ -123,11 +129,10 @@ function clearError() {
 
 // Last round + today's numbers. Each part fails on its own so a problem here
 // never replaces the live status with the "Database Unreachable" embed.
-async function fetchExtras(server) {
-  const count = server.current_player_count ?? 0;
+async function loadExtras(serverId, count) {
   const [lastRound, today, peak] = await Promise.all([
-    fetchLastRound(server.server_id).catch((err) => { console.error('[DB] last round:', err.message); return null; }),
-    fetchTodayStats(server.server_id, STATS_TIMEZONE).catch((err) => { console.error('[DB] today:', err.message); return null; }),
+    fetchLastRound(serverId).catch((err) => { console.error('[DB] last round:', err.message); return null; }),
+    fetchTodayStats(serverId, STATS_TIMEZONE).catch((err) => { console.error('[DB] today:', err.message); return null; }),
     monitor.peakEnabled
       ? recordPeak(CHANNEL_ID, count, STATS_TIMEZONE).catch((err) => { console.error('[DB] peak:', err.message); return null; })
       : null,
@@ -139,15 +144,45 @@ async function fetchExtras(server) {
   };
 }
 
+// The extras only change when a round ends, so they're re-queried when the
+// map changes (and once more on the next tick, in case the engine hadn't
+// written the finished round yet) or every EXTRAS_TTL_MS. In between, the
+// peak is written only when the live count beats it.
+async function fetchExtras(server, count) {
+  const cache      = monitor.extras;
+  const mapChanged = cache != null && server.current_map !== cache.map;
+  if (!cache || mapChanged || cache.recheck || Date.now() - cache.at >= EXTRAS_TTL_MS) {
+    const value = await loadExtras(server.server_id, count);
+    monitor.extras = { value, at: Date.now(), map: server.current_map, recheck: mapChanged };
+    return value;
+  }
+
+  const today = cache.value.today;
+  if (monitor.peakEnabled && today && count > (today.peak ?? 0)) {
+    const peak = await recordPeak(CHANNEL_ID, count, STATS_TIMEZONE)
+      .catch((err) => { console.error('[DB] peak:', err.message); return null; });
+    if (peak != null) today.peak = peak;
+  }
+  return cache.value;
+}
+
 async function buildCurrentEmbed() {
   const serverIds = monitor.row.server_ids ?? [];
+  const label     = monitor.row.label;
   try {
     const servers = await fetchServers(serverIds);
     const s = servers[0] ?? null;
-    const [players, snapshot, extras] = s
-      ? await Promise.all([fetchLivePlayers(s.ip, s.port), fetchLiveSnapshot(s.ip, s.port), fetchExtras(s)])
-      : [[], null, {}];
-    return { embeds: buildStatusEmbeds(servers, monitor.row.label, serverIds, players, snapshot, extras), servers, snapshot };
+    if (s) {
+      const [players, snapshot, extras] = await Promise.all([
+        fetchLivePlayers(s.ip, s.port), fetchLiveSnapshot(s.ip, s.port), fetchExtras(s, s.current_player_count ?? 0),
+      ]);
+      return { embeds: buildStatusEmbeds(servers, label, serverIds, players, snapshot, extras), servers, snapshot };
+    }
+
+    // Not ACTIVE/EMPTY: show when it was last seen, plus the last round.
+    const offline = serverIds.length > 0 ? await fetchServerById(serverIds[0]) : null;
+    const extras  = offline ? await fetchExtras(offline, 0) : {};
+    return { embeds: buildStatusEmbeds(servers, label, serverIds, [], null, extras, offline), servers, snapshot: null };
   } catch (err) {
     console.error('[DB]', err.message);
     return { embeds: [buildErrorEmbed(monitor.row.label)], servers: [], snapshot: null };
@@ -155,7 +190,7 @@ async function buildCurrentEmbed() {
 }
 
 async function tick() {
-  if (monitor.busy) return;
+  if (monitor.busy || monitor.shuttingDown) return;
   monitor.busy = true;
 
   try {
@@ -223,7 +258,7 @@ client.once('clientReady', async () => {
   }
 
   await tick();
-  setInterval(tick, POLL_INTERVAL_MS);
+  monitor.timer = setInterval(tick, POLL_INTERVAL_MS);
   console.log(`[BOT] Polling every ${POLL_INTERVAL_MS / 1000}s. Ready.`);
 });
 
@@ -235,7 +270,24 @@ process.on('unhandledRejection', (err) => console.error('[PROCESS] Unhandled rej
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 
 async function shutdown(signal) {
+  if (monitor.shuttingDown) return;
+  monitor.shuttingDown = true;
+  clearInterval(monitor.timer);
   console.log(`[BOT] ${signal} received — shutting down.`);
+
+  // Mark the message so nobody trusts a frozen embed. Capped so a slow or
+  // unreachable Discord can't hold up the stop.
+  if (monitor.messageId && client.isReady()) {
+    const label = monitor.row?.label || LABEL_OVERRIDE || 'BF1942 Server Status';
+    const edit  = fetchChannel().then((channel) =>
+      channel.messages.edit(monitor.messageId, { embeds: [buildBotOfflineEmbed(label)] }));
+    try {
+      await Promise.race([edit, new Promise((resolve) => setTimeout(resolve, SHUTDOWN_EDIT_MS))]);
+    } catch (err) {
+      console.warn('[BOT] Could not mark the status message offline:', err.message);
+    }
+  }
+
   client.destroy();
   await pool.end();
   process.exit(0);
