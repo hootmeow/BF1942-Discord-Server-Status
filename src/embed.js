@@ -107,7 +107,8 @@ function renderTeamScoreboard(teamPlayers) {
 
   for (let i = 0; i < teamPlayers.length; i++) {
     const p     = teamPlayers[i];
-    const name  = (p.player_name || '').slice(0, 24).padEnd(24);
+    // A backtick in a name could close the ``` block and garble the table.
+    const name  = (p.player_name || '').replace(/`/g, "'").slice(0, 24).padEnd(24);
     const score = String(p.score ?? 0).padStart(5);
     const k     = String(p.kills  ?? 0).padStart(3);
     const d     = String(p.deaths ?? 0).padStart(3);
