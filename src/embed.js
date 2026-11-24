@@ -190,11 +190,19 @@ function plural(n, word) {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
-// Markdown link that survives clan tags: brackets in the text are escaped,
-// and parentheses in the URL are encoded so they can't end the link early.
+// Text Discord can put inside [text](url) as-is: one level of matched
+// brackets (clan tags like =volpi=[duke]) and no markdown characters.
+// Backslash escapes are NOT removed inside link text, so escaping would show
+// up literally as \[duke\].
+const LINKABLE_TEXT = /^(?:\[[^[\]]*\]|[^[\]*_~`|\\<>])+$/;
+
+// Link that survives clan tags. Names that can't sit inside link text are
+// shown as escaped plain text followed by a separate ↗ link. Parentheses in
+// the URL are encoded so they can't end the link early.
 function mdLink(text, url) {
-  const safe = escapeMarkdown(String(text)).replace(/[[\]]/g, '\\$&');
-  return `[${safe}](${url.replace(/\(/g, '%28').replace(/\)/g, '%29')})`;
+  const href = url.replace(/\(/g, '%28').replace(/\)/g, '%29');
+  const str  = String(text);
+  return LINKABLE_TEXT.test(str) ? `[${str}](${href})` : `${escapeMarkdown(str)} [↗](${href})`;
 }
 
 function lastRoundField(round) {
@@ -237,10 +245,17 @@ function averagePing(roster) {
 }
 
 function recentMapsField(maps) {
-  // Oldest → newest so it reads like the rotation did.
+  // Oldest → newest so it reads like the rotation did; a map played twice in
+  // a row (restart, admin re-run) shows once as "×2".
+  const runs = [];
+  for (const map of maps.slice().reverse().map(formatMap)) {
+    const last = runs[runs.length - 1];
+    if (last?.map === map) last.n++;
+    else runs.push({ map, n: 1 });
+  }
   return {
     name: '🗺️  Recent maps',
-    value: maps.slice().reverse().map(formatMap).join(' → '),
+    value: runs.map((r) => (r.n > 1 ? `${r.map} ×${r.n}` : r.map)).join(' → '),
     inline: true,
   };
 }
