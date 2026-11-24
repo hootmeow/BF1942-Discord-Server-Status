@@ -180,7 +180,7 @@ WorkingDirectory=/opt/bf1942-status
 EnvironmentFile=/opt/bf1942-status/.env
 ExecStart=/usr/bin/node src/index.js
 Restart=always
-RestartSec=10
+RestartSec=60
 StandardOutput=journal
 StandardError=journal
 
@@ -231,7 +231,7 @@ WorkingDirectory=/opt/bf1942-status-eu
 EnvironmentFile=/opt/bf1942-status-eu/.env
 ExecStart=/usr/bin/node src/index.js
 Restart=always
-RestartSec=10
+RestartSec=60
 StandardOutput=journal
 StandardError=journal
 

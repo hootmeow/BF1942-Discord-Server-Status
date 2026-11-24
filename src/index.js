@@ -23,6 +23,17 @@ const POLL_INTERVAL_MS   = Math.max(MIN_POLL_MS, parseInt(process.env.POLL_INTER
 const SERVER_ADDRESS     = process.env.BF1942_SERVER_ADDRESS;
 const CHANNEL_ID         = process.env.BF1942_CHANNEL_ID;
 const LABEL_OVERRIDE     = process.env.BF1942_LABEL || null;
+// Every Discord login uses one of the bot's ~1000 daily gateway sessions, so a
+// failed login waits this long before exiting rather than letting systemd
+// restart it in a tight loop.
+const LOGIN_RETRY_MS     = 5 * 60_000;
+
+const [SERVER_IP, serverPortRaw] = SERVER_ADDRESS.split(':');
+const SERVER_PORT = parseInt(serverPortRaw, 10);
+if (!SERVER_IP || !Number.isFinite(SERVER_PORT)) {
+  console.error(`[CONFIG] BF1942_SERVER_ADDRESS must be "ip:port" (got "${SERVER_ADDRESS}")`);
+  process.exit(1);
+}
 
 if (parseInt(process.env.POLL_INTERVAL_MS || '60000') < MIN_POLL_MS) {
   console.warn(`[CONFIG] POLL_INTERVAL_MS is below the minimum (${MIN_POLL_MS}ms). Clamped to ${POLL_INTERVAL_MS}ms to avoid Discord rate limits.`);
@@ -100,6 +111,7 @@ async function tick() {
   monitor.busy = true;
 
   try {
+    if (!monitor.row) await bootstrap();
     const { embed, servers } = await buildCurrentEmbed();
     await publish(embed);
     clearError();
@@ -121,13 +133,11 @@ async function tick() {
 
 // ── Ready ─────────────────────────────────────────────────────────────────────
 
+// Runs from tick() until it succeeds. Failing here (server not polled yet,
+// channel unreachable, DB down) used to exit, and systemd's restarts burned
+// through the daily login limit; retrying in-process needs no new login.
 async function bootstrap() {
-  const [ip, portRaw] = SERVER_ADDRESS.split(':');
-  const port = parseInt(portRaw, 10);
-  if (!ip || !Number.isFinite(port)) {
-    throw new Error(`BF1942_SERVER_ADDRESS must be "ip:port" (got "${SERVER_ADDRESS}")`);
-  }
-
+  const ip = SERVER_IP, port = SERVER_PORT;
   const server = await findServerByAddress(ip, port);
   if (!server) {
     throw new Error(`No server found in Postgres with address ${ip}:${port}. Is it blacklisted or not yet polled?`);
@@ -152,13 +162,6 @@ client.once('clientReady', async () => {
     console.warn('[DB] Initial check failed:', err.message, '— will retry on first poll.');
   }
 
-  try {
-    await bootstrap();
-  } catch (err) {
-    console.error('[BOT]', err.message);
-    process.exit(1);
-  }
-
   await tick();
   setInterval(tick, POLL_INTERVAL_MS);
   console.log(`[BOT] Polling every ${POLL_INTERVAL_MS / 1000}s. Ready.`);
@@ -181,4 +184,7 @@ async function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));
 
-client.login(process.env.DISCORD_TOKEN);
+client.login(process.env.DISCORD_TOKEN).catch((err) => {
+  console.error(`[DISCORD] Login failed: ${err.message} — exiting in ${LOGIN_RETRY_MS / 60_000} min.`);
+  setTimeout(() => process.exit(1), LOGIN_RETRY_MS);
+});

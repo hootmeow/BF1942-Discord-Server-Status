@@ -277,7 +277,7 @@ WorkingDirectory=${INSTALL_PATH}
 EnvironmentFile=${INSTALL_PATH}/.env
 ExecStart=${NODE_BIN} src/index.js
 Restart=always
-RestartSec=10
+RestartSec=60
 StandardOutput=journal
 StandardError=journal
 
