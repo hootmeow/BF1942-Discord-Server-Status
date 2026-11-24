@@ -6,7 +6,7 @@ const {
   fetchLastRound, fetchTodayStats, findServerByAddress, upsertMonitor,
   updateMonitorMessage, ensureSchema, recordPeak,
 } = require('./database');
-const { buildStatusEmbed, buildErrorEmbed, buildPresenceText } = require('./embed');
+const { buildStatusEmbeds, buildErrorEmbed, buildPresenceText } = require('./embed');
 
 // ── Env validation ────────────────────────────────────────────────────────────
 
@@ -78,10 +78,12 @@ async function fetchChannel() {
   return channel;
 }
 
-async function publish(embed) {
+async function publish(embeds) {
   // Compare without the timestamp, which is "now" on every build.
-  const { timestamp, ...content } = embed.toJSON();
-  const fingerprint = JSON.stringify(content);
+  const fingerprint = JSON.stringify(embeds.map((e) => {
+    const { timestamp, ...content } = e.toJSON();
+    return content;
+  }));
   const fresh = Date.now() - monitor.lastEditAt < FORCE_REFRESH_MS;
   if (monitor.messageId && fingerprint === monitor.lastEmbed && fresh) return;
 
@@ -89,7 +91,7 @@ async function publish(embed) {
 
   if (monitor.messageId) {
     try {
-      await channel.messages.edit(monitor.messageId, { embeds: [embed] });
+      await channel.messages.edit(monitor.messageId, { embeds });
       monitor.lastEmbed = fingerprint;
       monitor.lastEditAt = Date.now();
       return;
@@ -99,7 +101,7 @@ async function publish(embed) {
     }
   }
 
-  const message = await channel.send({ embeds: [embed] });
+  const message = await channel.send({ embeds });
   monitor.messageId = message.id;
   monitor.lastEmbed = fingerprint;
   monitor.lastEditAt = Date.now();
@@ -145,10 +147,10 @@ async function buildCurrentEmbed() {
     const [players, snapshot, extras] = s
       ? await Promise.all([fetchLivePlayers(s.ip, s.port), fetchLiveSnapshot(s.ip, s.port), fetchExtras(s)])
       : [[], null, {}];
-    return { embed: buildStatusEmbed(servers, monitor.row.label, serverIds, players, snapshot, extras), servers, snapshot };
+    return { embeds: buildStatusEmbeds(servers, monitor.row.label, serverIds, players, snapshot, extras), servers, snapshot };
   } catch (err) {
     console.error('[DB]', err.message);
-    return { embed: buildErrorEmbed(monitor.row.label), servers: [], snapshot: null };
+    return { embeds: [buildErrorEmbed(monitor.row.label)], servers: [], snapshot: null };
   }
 }
 
@@ -158,8 +160,8 @@ async function tick() {
 
   try {
     if (!monitor.row) await bootstrap();
-    const { embed, servers, snapshot } = await buildCurrentEmbed();
-    await publish(embed);
+    const { embeds, servers, snapshot } = await buildCurrentEmbed();
+    await publish(embeds);
     clearError();
 
     // Reuse this tick's data — no second DB fetch needed.

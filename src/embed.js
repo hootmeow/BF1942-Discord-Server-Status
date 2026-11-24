@@ -129,42 +129,69 @@ function renderTeamScoreboard(teamPlayers) {
   return '```\n' + lines.join('\n') + '\n```';
 }
 
-// ── Bottom fields: last round, today ─────────────────────────────────────────
+// ── Summary card: last round, MVP, today ─────────────────────────────────────
 
 // Team 1 is Axis, team 2 Allies (same as the scoreboard and the map-alert bot).
-function winnerName(team) {
-  return team === 1 ? 'Axis' : team === 2 ? 'Allies' : null;
-}
+// Colours match the 🔴 / 🔵 team headings.
+const TEAMS = {
+  1: { name: 'Axis',   color: 0xed4245 },
+  2: { name: 'Allies', color: 0x3b82f6 },
+};
+const DRAW_COLOR = 0x747f8d;
 
 function plural(n, word) {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
-function formatLastRound(round) {
-  const map    = formatMap(round.map_name);
-  const winner = winnerName(round.winner_team);
-  const bits   = [winner ? `**${winner}** won ${map}` : `Draw on ${map}`];
-  if (round.duration_seconds > 0) bits.push(`${Math.round(round.duration_seconds / 60)} min`);
-  // Discord renders <t:…:R> as "5 minutes ago" in each reader's own clock.
-  if (round.end_time) bits.push(`ended <t:${Math.floor(new Date(round.end_time).getTime() / 1000)}:R>`);
-  const lines = [bits.join(' · ')];
-  if (round.mvp_name) lines.push(`MVP: ${escapeMarkdown(round.mvp_name)} — ${round.mvp_score ?? 0} pts`);
-  return lines.join('\n');
+function lastRoundField(round) {
+  const team  = TEAMS[round.winner_team];
+  const lines = [team ? `**${team.name}** won` : '**Draw**', formatMap(round.map_name)];
+  const when  = [];
+  if (round.duration_seconds > 0) when.push(`${Math.round(round.duration_seconds / 60)} min`);
+  // Discord renders <t:…:R> as "16 minutes ago" in each reader's own clock.
+  if (round.end_time) when.push(`<t:${Math.floor(new Date(round.end_time).getTime() / 1000)}:R>`);
+  if (when.length) lines.push(when.join(' · '));
+  return { name: '🏁  Last round', value: lines.join('\n'), inline: true };
 }
 
-function formatToday(today, current) {
-  const bits = [];
-  if (today.peak != null) bits.push(`Peak ${today.peak}`);
-  bits.push(`now ${current}`);
-  if (today.players != null) bits.push(plural(today.players, 'player'));
-  if (today.rounds  != null) bits.push(plural(today.rounds, 'round'));
-  return bits.join(' · ');
+function mvpField(round) {
+  return {
+    name: '⭐  MVP',
+    value: `${escapeMarkdown(round.mvp_name)}\n${round.mvp_score ?? 0} pts`,
+    inline: true,
+  };
+}
+
+function todayField(today, current, label) {
+  const lines = [today.peak != null ? `Peak **${today.peak}** · now ${current}` : `Now ${current}`];
+  const totals = [];
+  if (today.players != null) totals.push(plural(today.players, 'player'));
+  if (today.rounds  != null) totals.push(plural(today.rounds, 'round'));
+  if (totals.length) lines.push(totals.join(' · '));
+  return { name: `📈  ${label || 'Today'}`, value: lines.join('\n'), inline: true };
+}
+
+// Second embed under the status one: three side-by-side columns (stacked on
+// mobile), striped in the last round's winning team colour. Null when there
+// is nothing to show.
+function buildSummaryEmbed(extras, current) {
+  const fields = [];
+  const round  = extras.lastRound;
+  if (round) {
+    fields.push(lastRoundField(round));
+    if (round.mvp_name) fields.push(mvpField(round));
+  }
+  if (extras.today) fields.push(todayField(extras.today, current, extras.todayLabel));
+  if (fields.length === 0) return null;
+
+  return new EmbedBuilder()
+    .setColor(TEAMS[round?.winner_team]?.color ?? DRAW_COLOR)
+    .addFields(fields);
 }
 
 // ── Main single-server embed ──────────────────────────────────────────────────
 
-// extras: { lastRound, today: { peak, players, rounds }, todayLabel }; any may be missing.
-function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapshot = null, extras = {}) {
+function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapshot = null) {
   const title  = `🎖️  ${label}`;
   const server = servers[0] ?? null;
 
@@ -255,14 +282,24 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
     }
   }
 
-  if (extras.lastRound) {
-    embed.addFields({ name: '🏁  Last round', value: formatLastRound(extras.lastRound), inline: false });
-  }
-  if (extras.today) {
-    embed.addFields({ name: `📈  ${extras.todayLabel || 'Today'}`, value: formatToday(extras.today, count), inline: false });
-  }
-
   return embed;
+}
+
+// Status card plus, when there's data for it, the summary card. The footer
+// and timestamp move to whichever card is last so they sit at the bottom.
+// extras: { lastRound, today: { peak, players, rounds }, todayLabel }; any may be missing.
+function buildStatusEmbeds(servers, label, serverIds = [], players = [], snapshot = null, extras = {}) {
+  const status = buildStatusEmbed(servers, label, serverIds, players, snapshot);
+  if (!servers[0]) return [status];
+
+  const summary = buildSummaryEmbed(extras, servers[0].current_player_count ?? 0);
+  if (!summary) return [status];
+
+  // .data holds API-shaped keys (icon_url); setFooter wants iconURL.
+  const { text, icon_url: iconURL } = status.data.footer;
+  summary.setFooter({ text, iconURL }).setTimestamp(new Date(status.data.timestamp));
+  status.setFooter(null).setTimestamp(null);
+  return [status, summary];
 }
 
 // ── Bot presence line (shown under the bot's name in the member list) ────────
@@ -281,4 +318,4 @@ function buildPresenceText(servers, snapshot = null) {
     : `${players}/${max} · ${map}`;
 }
 
-module.exports = { buildStatusEmbed, buildErrorEmbed, buildPresenceText };
+module.exports = { buildStatusEmbeds, buildErrorEmbed, buildPresenceText };
