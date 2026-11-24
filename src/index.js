@@ -6,7 +6,9 @@ const {
   fetchLastRound, fetchRecentMaps, fetchTodayStats, findServerByAddress, upsertMonitor,
   updateMonitorMessage, ensureSchema, recordPeak,
 } = require('./database');
-const { buildStatusEmbeds, buildErrorEmbed, buildBotOfflineEmbed, buildPresenceText } = require('./embed');
+const {
+  buildStatusEmbeds, buildErrorEmbed, buildBotOfflineEmbed, buildPresenceText, buildPresenceStatus,
+} = require('./embed');
 
 // ── Env validation ────────────────────────────────────────────────────────────
 
@@ -202,12 +204,14 @@ async function tick() {
     clearError();
 
     // Reuse this tick's data — no second DB fetch needed.
-    const presence = buildPresenceText(servers, snapshot);
+    const text     = buildPresenceText(servers, snapshot);
+    const status   = buildPresenceStatus(servers, snapshot);
+    const presence = `${status}|${text}`;
     if (presence !== monitor.lastPresence || Date.now() - monitor.lastPresenceAt >= FORCE_REFRESH_MS) {
       try {
         client.user.setPresence({
-          activities: [{ name: presence, type: ActivityType.Watching }],
-          status: 'online',
+          activities: [{ name: text, type: ActivityType.Watching }],
+          status,
         });
         monitor.lastPresence = presence;
         monitor.lastPresenceAt = Date.now();

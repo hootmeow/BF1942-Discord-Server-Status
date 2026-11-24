@@ -441,4 +441,13 @@ function buildPresenceText(servers, snapshot = null) {
     : `${players}/${max} · ${map}`;
 }
 
-module.exports = { buildStatusEmbeds, buildErrorEmbed, buildBotOfflineEmbed, buildPresenceText };
+// Dot on the bot's avatar: 🟢 players on, 🟡 empty, 🔴 offline / stale / DB down.
+function buildPresenceStatus(servers, snapshot = null) {
+  const s = servers[0];
+  if (!s || isSnapshotStale(snapshot)) return 'dnd';
+  return (s.current_player_count || 0) > 0 ? 'online' : 'idle';
+}
+
+module.exports = {
+  buildStatusEmbeds, buildErrorEmbed, buildBotOfflineEmbed, buildPresenceText, buildPresenceStatus,
+};
