@@ -210,7 +210,9 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
   if (timeLeft) infoFields.push({ name: '⏱️  Time left', value: timeLeft,          inline: true });
   embed.addFields(infoFields);
 
-  if (players && players.length > 0) {
+  // The live player table can keep rows after everyone leaves (the site's
+  // API guards against the same ghosts), so trust the server's count.
+  if (count > 0 && players && players.length > 0) {
     const allied = players.filter(p => p.team === 1);
     const axis   = players.filter(p => p.team === 2);
     const other  = players.filter(p => p.team !== 1 && p.team !== 2);
