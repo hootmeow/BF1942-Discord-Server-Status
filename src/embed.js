@@ -25,6 +25,8 @@ const MAP_DISPLAY = {
 };
 
 const BF1942_URL = 'https://captheflag.com/bf1942';
+// PNG, not favicon.ico: Discord does not render .ico in embeds.
+const FOOTER_ICON = 'https://captheflag.com/apple-icon';
 const BAR_WIDTH  = 12;
 // The live poller refreshes snapshots ~every minute. If the newest row is
 // older than this, the poller is probably wedged — show a warning.
@@ -164,7 +166,7 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
     .setTitle(title)
     .setURL(serverUrl)
     .setDescription(descLines.join('\n'))
-    .setFooter({ text: 'Powered by captheflag.com  ·  Last Update', iconURL: 'https://captheflag.com/favicon.ico' })
+    .setFooter({ text: 'Powered by captheflag.com  ·  Last Update', iconURL: FOOTER_ICON })
     .setTimestamp();
 
   // Inline info fields: map, mode, time remaining
