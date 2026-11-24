@@ -250,13 +250,6 @@ function todayField(today, current, label) {
 // Second embed under the status one: three side-by-side columns (stacked on
 // mobile), striped in the last round's winning team colour. Null when there
 // is nothing to show.
-// Mean ping of a roster, ignoring 0/missing (bots and players still loading).
-function averagePing(roster) {
-  const pings = roster.map((p) => p.ping).filter((v) => v > 0);
-  if (pings.length === 0) return null;
-  return Math.round(pings.reduce((a, b) => a + b, 0) / pings.length);
-}
-
 function recentMapsField(maps) {
   // Oldest → newest so it reads like the rotation did; a map played twice in
   // a row (restart, admin re-run) shows once as "×2".
@@ -329,8 +322,6 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
   const isOnline = count > 0;
   const locked   = snapshot?.has_password === 1;
   const stale    = isSnapshotStale(snapshot);
-  // A stale snapshot's clock is frozen; the ⚠️ header explains why it's gone.
-  const timeLeft = stale ? null : formatTimeRemaining(snapshot?.round_time_remain);
 
   // Header: status · 🔒 (if locked) · ⚠️ (if stale)
   const headerBits = [`**Server:** ${isOnline ? '🟢' : '⚪'}  **${isOnline ? 'Online' : 'Empty'}**`];
@@ -366,7 +357,6 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
     { name: '🗺️  Map',  value: map, inline: true },
   ];
   if (gt)       infoFields.push({ name: '⚔️  Mode',      value: gt,               inline: true });
-  if (timeLeft) infoFields.push({ name: '⏱️  Time left', value: timeLeft,          inline: true });
   embed.addFields(infoFields);
 
   // The live player table can keep rows after everyone leaves (the site's
@@ -377,10 +367,9 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
     const other  = players.filter(p => p.team !== 1 && p.team !== 2);
 
     const fmtLabel = (color, side, roster, tickets) => {
-      const bits = [plural(roster.length, 'player')];
+      const bits = [];
       if (tickets != null) bits.push(`${tickets} tickets`);
-      const ping = averagePing(roster);
-      if (ping != null) bits.push(`${ping} ms avg`);
+      bits.push(plural(roster.length, 'player'));
       return `${color}  ${side} — ${bits.join(' · ')}`;
     };
 
