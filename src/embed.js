@@ -1,4 +1,4 @@
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, escapeMarkdown } = require('discord.js');
 
 const MAP_DISPLAY = {
   'berlin':               'Berlin',
@@ -114,9 +114,42 @@ function renderTeamScoreboard(teamPlayers) {
   return '```\n' + body + '\n```';
 }
 
+// ── Bottom fields: last round, today ─────────────────────────────────────────
+
+// Team 1 is Axis, team 2 Allies (same as the scoreboard and the map-alert bot).
+function winnerName(team) {
+  return team === 1 ? 'Axis' : team === 2 ? 'Allies' : null;
+}
+
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+function formatLastRound(round) {
+  const map    = formatMap(round.map_name);
+  const winner = winnerName(round.winner_team);
+  const bits   = [winner ? `**${winner}** won ${map}` : `Draw on ${map}`];
+  if (round.duration_seconds > 0) bits.push(`${Math.round(round.duration_seconds / 60)} min`);
+  // Discord renders <t:…:R> as "5 minutes ago" in each reader's own clock.
+  if (round.end_time) bits.push(`ended <t:${Math.floor(new Date(round.end_time).getTime() / 1000)}:R>`);
+  const lines = [bits.join(' · ')];
+  if (round.mvp_name) lines.push(`MVP: ${escapeMarkdown(round.mvp_name)} — ${round.mvp_score ?? 0} pts`);
+  return lines.join('\n');
+}
+
+function formatToday(today, current) {
+  const bits = [];
+  if (today.peak != null) bits.push(`Peak ${today.peak}`);
+  bits.push(`now ${current}`);
+  if (today.players != null) bits.push(plural(today.players, 'player'));
+  if (today.rounds  != null) bits.push(plural(today.rounds, 'round'));
+  return bits.join(' · ');
+}
+
 // ── Main single-server embed ──────────────────────────────────────────────────
 
-function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapshot = null) {
+// extras: { lastRound, today: { peak, players, rounds }, todayLabel }; any may be missing.
+function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapshot = null, extras = {}) {
   const title  = `🎖️  ${label}`;
   const server = servers[0] ?? null;
 
@@ -202,6 +235,13 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
         inline: false,
       });
     }
+  }
+
+  if (extras.lastRound) {
+    embed.addFields({ name: '🏁  Last round', value: formatLastRound(extras.lastRound), inline: false });
+  }
+  if (extras.today) {
+    embed.addFields({ name: `📈  ${extras.todayLabel || 'Today'}`, value: formatToday(extras.today, count), inline: false });
   }
 
   return embed;

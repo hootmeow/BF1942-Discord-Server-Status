@@ -14,4 +14,8 @@ CREATE TABLE IF NOT EXISTS discord_monitors (
     UNIQUE (channel_id)
 );
 
+-- Added later; the bot also runs these on startup.
+ALTER TABLE discord_monitors ADD COLUMN IF NOT EXISTS peak_players SMALLINT;
+ALTER TABLE discord_monitors ADD COLUMN IF NOT EXISTS peak_date    DATE;
+
 CREATE INDEX IF NOT EXISTS idx_discord_monitors_guild ON discord_monitors(guild_id);

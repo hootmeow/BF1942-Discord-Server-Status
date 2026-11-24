@@ -8,7 +8,8 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD,
   // Shows up in pg_stat_activity so these connections can be told apart.
   application_name: 'bf1942-discord-status',
-  // A tick runs at most 3 queries in parallel.
+  // A tick fires up to 6 short queries at once; extras wait for a free
+  // connection rather than opening more.
   max: 3,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
@@ -92,6 +93,45 @@ async function fetchLiveSnapshot(serverIp, serverPort) {
   return rows[0] ?? null;
 }
 
+// Most recent finished round on the server plus its top scorer.
+// Uses idx_rounds_server_id_start_time; the MVP lookup hits the
+// round_player_stats primary key.
+async function fetchLastRound(serverId) {
+  const { rows } = await pool.query(
+    `SELECT r.round_id, r.map_name, r.winner_team, r.duration_seconds, r.end_time,
+            mvp.player_name AS mvp_name, mvp.score AS mvp_score
+     FROM (SELECT round_id, map_name, winner_team, duration_seconds, end_time
+           FROM rounds
+           WHERE server_id = $1 AND end_time IS NOT NULL
+           ORDER BY start_time DESC
+           LIMIT 1) r
+     LEFT JOIN LATERAL (
+       SELECT p.canonical_name AS player_name, rps.final_score AS score
+       FROM round_player_stats rps
+       JOIN players p ON p.player_id = rps.player_id
+       WHERE rps.round_id = r.round_id
+       ORDER BY rps.final_score DESC NULLS LAST
+       LIMIT 1
+     ) mvp ON true`,
+    [serverId]
+  );
+  return rows[0] ?? null;
+}
+
+// Rounds finished today and distinct players in them; "today" is local to tz.
+async function fetchTodayStats(serverId, tz) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(DISTINCT r.round_id)::int  AS rounds,
+            COUNT(DISTINCT rps.player_id)::int AS players
+     FROM rounds r
+     LEFT JOIN round_player_stats rps ON rps.round_id = r.round_id
+     WHERE r.server_id = $1
+       AND r.start_time >= date_trunc('day', now() AT TIME ZONE $2) AT TIME ZONE $2`,
+    [serverId, tz]
+  );
+  return rows[0] ?? { rounds: 0, players: 0 };
+}
+
 async function findServerByAddress(ip, port) {
   const { rows } = await pool.query(
     `SELECT server_id, current_server_name, host(ip) AS ip, port
@@ -119,6 +159,32 @@ async function upsertMonitor(guildId, channelId, label, serverIds) {
   return normaliseMonitor(rows[0]);
 }
 
+// Columns added after the original setup.sql; safe to run on every start.
+async function ensureSchema() {
+  await pool.query(
+    `ALTER TABLE discord_monitors
+       ADD COLUMN IF NOT EXISTS peak_players SMALLINT,
+       ADD COLUMN IF NOT EXISTS peak_date    DATE`
+  );
+}
+
+// The engine keeps no concurrent-player history in Postgres, so the bot
+// records the highest count it has seen today. Persisted so a restart
+// doesn't reset it; resets when the date (in tz) changes.
+async function recordPeak(channelId, count, tz) {
+  const { rows } = await pool.query(
+    `UPDATE discord_monitors
+     SET peak_players = CASE WHEN peak_date = (now() AT TIME ZONE $3)::date
+                             THEN GREATEST(COALESCE(peak_players, 0), $2)
+                             ELSE $2 END,
+         peak_date = (now() AT TIME ZONE $3)::date
+     WHERE channel_id = $1
+     RETURNING peak_players`,
+    [channelId, count, tz]
+  );
+  return rows[0]?.peak_players ?? count;
+}
+
 async function updateMonitorMessage(channelId, messageId) {
   await pool.query(
     'UPDATE discord_monitors SET message_id = $1 WHERE channel_id = $2',
@@ -132,7 +198,11 @@ module.exports = {
   fetchServers,
   fetchLivePlayers,
   fetchLiveSnapshot,
+  fetchLastRound,
+  fetchTodayStats,
   findServerByAddress,
   upsertMonitor,
   updateMonitorMessage,
+  ensureSchema,
+  recordPeak,
 };

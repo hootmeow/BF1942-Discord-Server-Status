@@ -3,7 +3,8 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const {
   pool, testConnection, fetchServers, fetchLivePlayers, fetchLiveSnapshot,
-  findServerByAddress, upsertMonitor, updateMonitorMessage,
+  fetchLastRound, fetchTodayStats, findServerByAddress, upsertMonitor,
+  updateMonitorMessage, ensureSchema, recordPeak,
 } = require('./database');
 const { buildStatusEmbed, buildErrorEmbed, buildPresenceText } = require('./embed');
 
@@ -31,6 +32,16 @@ const LOGIN_RETRY_MS     = 5 * 60_000;
 // "Last Update" timestamp still moves on an empty server.
 const FORCE_REFRESH_MS   = 5 * 60_000;
 
+// Timezone for the "Today" line (when today's peak and counts reset).
+const STATS_TIMEZONE     = process.env.STATS_TIMEZONE || 'UTC';
+try {
+  new Intl.DateTimeFormat('en', { timeZone: STATS_TIMEZONE });
+} catch {
+  console.error(`[CONFIG] STATS_TIMEZONE "${STATS_TIMEZONE}" is not a valid IANA timezone (e.g. America/New_York).`);
+  process.exit(1);
+}
+const TODAY_LABEL = STATS_TIMEZONE === 'UTC' ? 'Today (UTC)' : 'Today';
+
 const [SERVER_IP, serverPortRaw] = SERVER_ADDRESS.split(':');
 const SERVER_PORT = parseInt(serverPortRaw, 10);
 if (!SERVER_IP || !Number.isFinite(SERVER_PORT)) {
@@ -53,6 +64,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const monitor = {
   row: null, messageId: null, busy: false, lastError: null,
   lastEmbed: null, lastEditAt: 0, lastPresence: null, lastPresenceAt: 0,
+  peakEnabled: false,
 };
 
 // ── Poll / render ─────────────────────────────────────────────────────────────
@@ -107,15 +119,33 @@ function clearError() {
   monitor.lastError = null;
 }
 
+// Last round + today's numbers. Each part fails on its own so a problem here
+// never replaces the live status with the "Database Unreachable" embed.
+async function fetchExtras(server) {
+  const count = server.current_player_count ?? 0;
+  const [lastRound, today, peak] = await Promise.all([
+    fetchLastRound(server.server_id).catch((err) => { console.error('[DB] last round:', err.message); return null; }),
+    fetchTodayStats(server.server_id, STATS_TIMEZONE).catch((err) => { console.error('[DB] today:', err.message); return null; }),
+    monitor.peakEnabled
+      ? recordPeak(CHANNEL_ID, count, STATS_TIMEZONE).catch((err) => { console.error('[DB] peak:', err.message); return null; })
+      : null,
+  ]);
+  return {
+    lastRound,
+    today: today ? { ...today, peak } : null,
+    todayLabel: TODAY_LABEL,
+  };
+}
+
 async function buildCurrentEmbed() {
   const serverIds = monitor.row.server_ids ?? [];
   try {
     const servers = await fetchServers(serverIds);
     const s = servers[0] ?? null;
-    const [players, snapshot] = s
-      ? await Promise.all([fetchLivePlayers(s.ip, s.port), fetchLiveSnapshot(s.ip, s.port)])
-      : [[], null];
-    return { embed: buildStatusEmbed(servers, monitor.row.label, serverIds, players, snapshot), servers, snapshot };
+    const [players, snapshot, extras] = s
+      ? await Promise.all([fetchLivePlayers(s.ip, s.port), fetchLiveSnapshot(s.ip, s.port), fetchExtras(s)])
+      : [[], null, {}];
+    return { embed: buildStatusEmbed(servers, monitor.row.label, serverIds, players, snapshot, extras), servers, snapshot };
   } catch (err) {
     console.error('[DB]', err.message);
     return { embed: buildErrorEmbed(monitor.row.label), servers: [], snapshot: null };
@@ -165,6 +195,13 @@ async function bootstrap() {
   }
 
   const channel = await fetchChannel();
+
+  try {
+    await ensureSchema();
+    monitor.peakEnabled = true;
+  } catch (err) {
+    console.warn('[DB] Could not add peak columns to discord_monitors; today\'s peak is disabled:', err.message);
+  }
 
   const label = LABEL_OVERRIDE || server.current_server_name || `Server ${server.server_id}`;
   monitor.row = await upsertMonitor(channel.guildId, CHANNEL_ID, label, [server.server_id]);
