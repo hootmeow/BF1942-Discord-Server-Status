@@ -190,9 +190,17 @@ function plural(n, word) {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
+// Markdown link that survives clan tags: brackets in the text are escaped,
+// and parentheses in the URL are encoded so they can't end the link early.
+function mdLink(text, url) {
+  const safe = escapeMarkdown(String(text)).replace(/[[\]]/g, '\\$&');
+  return `[${safe}](${url.replace(/\(/g, '%28').replace(/\)/g, '%29')})`;
+}
+
 function lastRoundField(round) {
   const team  = TEAMS[round.winner_team];
-  const lines = [team ? `**${team.name}** won` : '**Draw**', formatMap(round.map_name)];
+  const map   = mdLink(formatMap(round.map_name), `${BF1942_URL}/stats/rounds/${round.round_id}`);
+  const lines = [team ? `**${team.name}** won` : '**Draw**', map];
   const when  = [];
   if (round.duration_seconds > 0) when.push(`${Math.round(round.duration_seconds / 60)} min`);
   // Discord renders <t:…:R> as "16 minutes ago" in each reader's own clock.
@@ -204,7 +212,7 @@ function lastRoundField(round) {
 function mvpField(round) {
   return {
     name: '⭐  MVP',
-    value: `${escapeMarkdown(round.mvp_name)}\n${round.mvp_score ?? 0} pts`,
+    value: `${mdLink(round.mvp_name, `${BF1942_URL}/player/${encodeURIComponent(round.mvp_name)}`)}\n${round.mvp_score ?? 0} pts`,
     inline: true,
   };
 }
