@@ -209,14 +209,18 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
 
 // ── Bot presence line (shown under the bot's name in the member list) ────────
 
-function buildPresenceText(servers) {
+function buildPresenceText(servers, snapshot = null) {
   const s = servers[0];
   if (!s) return 'Offline';
   const players = s.current_player_count || 0;
   const max     = s.current_max_players  || 0;
   const map     = formatMap(s.current_map);
   if (players === 0) return `Empty · ${map}`;
-  return `${players}/${max} · ${map}`;
+  // Skip the clock when the snapshot is stale; it would show a frozen time.
+  const timeLeft = isSnapshotStale(snapshot) ? null : formatTimeRemaining(snapshot?.round_time_remain);
+  return timeLeft
+    ? `${players}/${max} · ${map} · ${timeLeft} left`
+    : `${players}/${max} · ${map}`;
 }
 
 module.exports = { buildStatusEmbed, buildErrorEmbed, buildPresenceText };

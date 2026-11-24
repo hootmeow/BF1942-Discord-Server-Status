@@ -115,10 +115,10 @@ async function buildCurrentEmbed() {
     const [players, snapshot] = s
       ? await Promise.all([fetchLivePlayers(s.ip, s.port), fetchLiveSnapshot(s.ip, s.port)])
       : [[], null];
-    return { embed: buildStatusEmbed(servers, monitor.row.label, serverIds, players, snapshot), servers };
+    return { embed: buildStatusEmbed(servers, monitor.row.label, serverIds, players, snapshot), servers, snapshot };
   } catch (err) {
     console.error('[DB]', err.message);
-    return { embed: buildErrorEmbed(monitor.row.label), servers: [] };
+    return { embed: buildErrorEmbed(monitor.row.label), servers: [], snapshot: null };
   }
 }
 
@@ -128,12 +128,12 @@ async function tick() {
 
   try {
     if (!monitor.row) await bootstrap();
-    const { embed, servers } = await buildCurrentEmbed();
+    const { embed, servers, snapshot } = await buildCurrentEmbed();
     await publish(embed);
     clearError();
 
-    // Reuse servers from this tick — no second DB fetch needed.
-    const presence = buildPresenceText(servers);
+    // Reuse this tick's data — no second DB fetch needed.
+    const presence = buildPresenceText(servers, snapshot);
     if (presence !== monitor.lastPresence || Date.now() - monitor.lastPresenceAt >= FORCE_REFRESH_MS) {
       try {
         client.user.setPresence({
