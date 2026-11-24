@@ -70,7 +70,7 @@ async function buildCurrentEmbed() {
     return { embed: buildStatusEmbed(servers, monitor.row.label, serverIds, players, snapshot), servers };
   } catch (err) {
     console.error('[DB]', err.message);
-    return { embed: buildErrorEmbed(monitor.row.label, err.message), servers: [] };
+    return { embed: buildErrorEmbed(monitor.row.label), servers: [] };
   }
 }
 

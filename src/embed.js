@@ -73,13 +73,15 @@ function isSnapshotStale(snapshot) {
 
 // ── Error embed ───────────────────────────────────────────────────────────────
 
-function buildErrorEmbed(label, errorMessage) {
+// The underlying error is logged by the caller; it is not shown in the public
+// channel because it can expose DB host, user and database names.
+function buildErrorEmbed(label) {
   return new EmbedBuilder()
     .setColor(0xed4245)
     .setTitle(`⚠️  ${label} — Database Unreachable`)
     .setURL(BF1942_URL)
     .setDescription(
-      `The stats database could not be reached.\n\`\`\`${errorMessage}\`\`\`\nServer data will resume automatically when the connection is restored.`
+      'The stats database could not be reached.\nServer data will resume automatically when the connection is restored.'
     )
     .setFooter({ text: 'Powered by captheflag.com' })
     .setTimestamp();
