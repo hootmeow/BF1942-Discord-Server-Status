@@ -3,7 +3,7 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
 const {
   pool, testConnection, fetchServers, fetchServerById, fetchLivePlayers, fetchLiveSnapshot,
-  fetchLastRound, fetchTodayStats, findServerByAddress, upsertMonitor,
+  fetchLastRound, fetchRecentMaps, fetchTodayStats, findServerByAddress, upsertMonitor,
   updateMonitorMessage, ensureSchema, recordPeak,
 } = require('./database');
 const { buildStatusEmbeds, buildErrorEmbed, buildBotOfflineEmbed, buildPresenceText } = require('./embed');
@@ -130,8 +130,9 @@ function clearError() {
 // Last round + today's numbers. Each part fails on its own so a problem here
 // never replaces the live status with the "Database Unreachable" embed.
 async function loadExtras(serverId, count) {
-  const [lastRound, today, peak] = await Promise.all([
+  const [lastRound, recentMaps, today, peak] = await Promise.all([
     fetchLastRound(serverId).catch((err) => { console.error('[DB] last round:', err.message); return null; }),
+    fetchRecentMaps(serverId).catch((err) => { console.error('[DB] recent maps:', err.message); return []; }),
     fetchTodayStats(serverId, STATS_TIMEZONE).catch((err) => { console.error('[DB] today:', err.message); return null; }),
     monitor.peakEnabled
       ? recordPeak(CHANNEL_ID, count, STATS_TIMEZONE).catch((err) => { console.error('[DB] peak:', err.message); return null; })
@@ -139,6 +140,7 @@ async function loadExtras(serverId, count) {
   ]);
   return {
     lastRound,
+    recentMaps,
     today: today ? { ...today, peak } : null,
     todayLabel: TODAY_LABEL,
   };

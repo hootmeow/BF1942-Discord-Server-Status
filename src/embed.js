@@ -229,7 +229,43 @@ function todayField(today, current, label) {
 // Second embed under the status one: three side-by-side columns (stacked on
 // mobile), striped in the last round's winning team colour. Null when there
 // is nothing to show.
-function buildSummaryEmbed(extras, current) {
+// Mean ping of a roster, ignoring 0/missing (bots and players still loading).
+function averagePing(roster) {
+  const pings = roster.map((p) => p.ping).filter((v) => v > 0);
+  if (pings.length === 0) return null;
+  return Math.round(pings.reduce((a, b) => a + b, 0) / pings.length);
+}
+
+function recentMapsField(maps) {
+  // Oldest → newest so it reads like the rotation did.
+  return {
+    name: '🗺️  Recent maps',
+    value: maps.slice().reverse().map(formatMap).join(' → '),
+    inline: true,
+  };
+}
+
+function winsTodayField(today) {
+  return {
+    name: '⚔️  Wins today',
+    value: `🔴 Axis **${today.axis_wins ?? 0}**\n🔵 Allies **${today.allies_wins ?? 0}**`,
+    inline: true,
+  };
+}
+
+function leaderField(p) {
+  return {
+    name: '🔥  Leading now',
+    value: `${mdLink(p.player_name, `${BF1942_URL}/player/${encodeURIComponent(p.player_name)}`)}\n` +
+           `${p.score ?? 0} pts · ${p.kills ?? 0}/${p.deaths ?? 0} K/D`,
+    inline: true,
+  };
+}
+
+// Row 1 (cached, changes per round): Last round · MVP · Today.
+// Row 2: Recent maps · Wins today · Leading now (live).
+// leader: current top scorer, or null when empty/stale.
+function buildSummaryEmbed(extras, current, leader = null) {
   const fields = [];
   const round  = extras.lastRound;
   if (round) {
@@ -237,6 +273,9 @@ function buildSummaryEmbed(extras, current) {
     if (round.mvp_name) fields.push(mvpField(round));
   }
   if (extras.today) fields.push(todayField(extras.today, current, extras.todayLabel));
+  if (extras.recentMaps?.length > 1) fields.push(recentMapsField(extras.recentMaps));
+  if (extras.today?.rounds > 0) fields.push(winsTodayField(extras.today));
+  if (leader) fields.push(leaderField(leader));
   if (fields.length === 0) return null;
 
   return new EmbedBuilder()
@@ -308,10 +347,11 @@ function buildStatusEmbed(servers, label, _serverIds = [], players = [], snapsho
     const other  = players.filter(p => p.team !== 1 && p.team !== 2);
 
     const fmtLabel = (color, side, roster, tickets) => {
-      const count = `${roster.length} player${roster.length === 1 ? '' : 's'}`;
-      return tickets != null
-        ? `${color}  ${side} — ${count} · ${tickets} tickets`
-        : `${color}  ${side} — ${count}`;
+      const bits = [plural(roster.length, 'player')];
+      if (tickets != null) bits.push(`${tickets} tickets`);
+      const ping = averagePing(roster);
+      if (ping != null) bits.push(`${ping} ms avg`);
+      return `${color}  ${side} — ${bits.join(' · ')}`;
     };
 
     embed.addFields(
@@ -342,7 +382,10 @@ function buildStatusEmbeds(servers, label, serverIds = [], players = [], snapsho
     ? buildStatusEmbed(servers, label, serverIds, players, snapshot)
     : buildServerOfflineEmbed(label, offline);
 
-  const summary = buildSummaryEmbed(extras, online?.current_player_count ?? 0);
+  // players arrive sorted by score; skip when empty (ghost rows) or stale.
+  const current = online?.current_player_count ?? 0;
+  const leader  = current > 0 && !isSnapshotStale(snapshot) ? players[0] ?? null : null;
+  const summary = buildSummaryEmbed(extras, current, leader);
   if (!summary) return [status];
 
   // .data holds API-shaped keys (icon_url); setFooter wants iconURL.

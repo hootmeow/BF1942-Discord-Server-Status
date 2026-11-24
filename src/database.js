@@ -131,11 +131,27 @@ async function fetchLastRound(serverId) {
   return rows[0] ?? null;
 }
 
-// Rounds finished today and distinct players in them; "today" is local to tz.
+// Maps of the last few finished rounds, newest first.
+async function fetchRecentMaps(serverId, limit = 4) {
+  const { rows } = await pool.query(
+    `SELECT map_name
+     FROM rounds
+     WHERE server_id = $1 AND end_time IS NOT NULL
+     ORDER BY start_time DESC
+     LIMIT $2`,
+    [serverId, limit]
+  );
+  return rows.map((r) => r.map_name).filter(Boolean);
+}
+
+// Rounds finished today, distinct players in them and wins per side;
+// "today" is local to tz. Team 1 is Axis, team 2 Allies.
 async function fetchTodayStats(serverId, tz) {
   const { rows } = await pool.query(
     `SELECT COUNT(DISTINCT r.round_id)::int  AS rounds,
-            COUNT(DISTINCT rps.player_id)::int AS players
+            COUNT(DISTINCT rps.player_id)::int AS players,
+            COUNT(DISTINCT r.round_id) FILTER (WHERE r.winner_team = 1)::int AS axis_wins,
+            COUNT(DISTINCT r.round_id) FILTER (WHERE r.winner_team = 2)::int AS allies_wins
      FROM rounds r
      LEFT JOIN round_player_stats rps ON rps.round_id = r.round_id
      WHERE r.server_id = $1
@@ -213,6 +229,7 @@ module.exports = {
   fetchLiveSnapshot,
   fetchServerById,
   fetchLastRound,
+  fetchRecentMaps,
   fetchTodayStats,
   findServerByAddress,
   upsertMonitor,
