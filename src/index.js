@@ -33,30 +33,51 @@ if (parseInt(process.env.POLL_INTERVAL_MS || '60000') < MIN_POLL_MS) {
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 // Single-monitor state: one bot instance = one server + one channel.
-const monitor = { row: null, message: null, busy: false };
+// Only the message ID is kept, never a Message object: a cached Message points
+// at a channel object that discord.js can drop (reconnect, lost access), after
+// which every edit fails with "Could not find the channel ... in the cache".
+const monitor = { row: null, messageId: null, busy: false, lastError: null };
 
 // ── Poll / render ─────────────────────────────────────────────────────────────
 
-async function ensureMessage() {
-  if (!monitor.row || monitor.message) return;
+// Cache hit after the first call; falls back to the API if the channel was evicted.
+async function fetchChannel() {
+  const channel = await client.channels.fetch(CHANNEL_ID);
+  if (!channel?.isTextBased()) {
+    throw new Error(`Channel ${CHANNEL_ID} not found or not text-based. Is the bot in that server?`);
+  }
+  return channel;
+}
 
-  const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
-  if (!channel?.isTextBased()) return;
+async function publish(embed) {
+  const channel = await fetchChannel();
 
-  if (monitor.row.message_id) {
+  if (monitor.messageId) {
     try {
-      monitor.message = await channel.messages.fetch(monitor.row.message_id);
+      await channel.messages.edit(monitor.messageId, { embeds: [embed] });
       return;
-    } catch {
-      // Previous message was deleted; fall through to send a new one.
+    } catch (err) {
+      if (err.code !== 10008) throw err;
+      console.warn('[BOT] Status message deleted externally; posting a new one.');
     }
   }
 
-  const { embed } = await buildCurrentEmbed();
-  monitor.message = await channel.send({ embeds: [embed] });
-  await updateMonitorMessage(CHANNEL_ID, monitor.message.id);
-  monitor.row.message_id = monitor.message.id;
-  console.log(`[BOT] Sent new status message (${monitor.message.id})`);
+  const message = await channel.send({ embeds: [embed] });
+  monitor.messageId = message.id;
+  await updateMonitorMessage(CHANNEL_ID, message.id);
+  console.log(`[BOT] Sent new status message (${message.id})`);
+}
+
+// Log an error once until it changes or clears, so a long outage doesn't
+// write the same line every tick.
+function reportError(err) {
+  if (err.message !== monitor.lastError) console.error('[BOT]', err.message);
+  monitor.lastError = err.message;
+}
+
+function clearError() {
+  if (monitor.lastError) console.log('[BOT] Recovered.');
+  monitor.lastError = null;
 }
 
 async function buildCurrentEmbed() {
@@ -75,27 +96,13 @@ async function buildCurrentEmbed() {
 }
 
 async function tick() {
-  await ensureMessage();
-  if (!monitor.message || monitor.busy) return;
+  if (monitor.busy) return;
   monitor.busy = true;
 
   try {
     const { embed, servers } = await buildCurrentEmbed();
-
-    try {
-      await monitor.message.edit({ embeds: [embed] });
-    } catch (err) {
-      if (err.code === 10008) {
-        console.warn('[BOT] Status message deleted externally; will recreate next tick.');
-        monitor.message = null;
-        monitor.row.message_id = null;
-        await updateMonitorMessage(CHANNEL_ID, null);
-      } else if (err.code === 429) {
-        console.warn('[BOT] Rate limited — skipping tick.');
-      } else {
-        console.error('[BOT] Edit failed:', err.message);
-      }
-    }
+    await publish(embed);
+    clearError();
 
     // Reuse servers from this tick — no second DB fetch needed.
     try {
@@ -104,6 +111,9 @@ async function tick() {
         status: 'online',
       });
     } catch { /* non-fatal */ }
+  } catch (err) {
+    // Lost access, unknown channel, Discord outage: retry next tick.
+    reportError(err);
   } finally {
     monitor.busy = false;
   }
@@ -123,13 +133,11 @@ async function bootstrap() {
     throw new Error(`No server found in Postgres with address ${ip}:${port}. Is it blacklisted or not yet polled?`);
   }
 
-  const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
-  if (!channel?.isTextBased()) {
-    throw new Error(`Channel ${CHANNEL_ID} not found or not text-based. Is the bot in that server?`);
-  }
+  const channel = await fetchChannel();
 
   const label = LABEL_OVERRIDE || server.current_server_name || `Server ${server.server_id}`;
   monitor.row = await upsertMonitor(channel.guildId, CHANNEL_ID, label, [server.server_id]);
+  monitor.messageId = monitor.row.message_id ?? null;
 
   console.log(`[BOT] Pinned to ${ip}:${port} (server_id=${server.server_id}) in channel ${CHANNEL_ID}. Label: "${label}".`);
 }
