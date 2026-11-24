@@ -27,6 +27,9 @@ const LABEL_OVERRIDE     = process.env.BF1942_LABEL || null;
 // failed login waits this long before exiting rather than letting systemd
 // restart it in a tight loop.
 const LOGIN_RETRY_MS     = 5 * 60_000;
+// Unchanged embeds/presence are not re-sent, except this often so the
+// "Last Update" timestamp still moves on an empty server.
+const FORCE_REFRESH_MS   = 5 * 60_000;
 
 const [SERVER_IP, serverPortRaw] = SERVER_ADDRESS.split(':');
 const SERVER_PORT = parseInt(serverPortRaw, 10);
@@ -47,7 +50,10 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 // Only the message ID is kept, never a Message object: a cached Message points
 // at a channel object that discord.js can drop (reconnect, lost access), after
 // which every edit fails with "Could not find the channel ... in the cache".
-const monitor = { row: null, messageId: null, busy: false, lastError: null };
+const monitor = {
+  row: null, messageId: null, busy: false, lastError: null,
+  lastEmbed: null, lastEditAt: 0, lastPresence: null, lastPresenceAt: 0,
+};
 
 // ── Poll / render ─────────────────────────────────────────────────────────────
 
@@ -61,11 +67,19 @@ async function fetchChannel() {
 }
 
 async function publish(embed) {
+  // Compare without the timestamp, which is "now" on every build.
+  const { timestamp, ...content } = embed.toJSON();
+  const fingerprint = JSON.stringify(content);
+  const fresh = Date.now() - monitor.lastEditAt < FORCE_REFRESH_MS;
+  if (monitor.messageId && fingerprint === monitor.lastEmbed && fresh) return;
+
   const channel = await fetchChannel();
 
   if (monitor.messageId) {
     try {
       await channel.messages.edit(monitor.messageId, { embeds: [embed] });
+      monitor.lastEmbed = fingerprint;
+      monitor.lastEditAt = Date.now();
       return;
     } catch (err) {
       if (err.code !== 10008) throw err;
@@ -75,6 +89,8 @@ async function publish(embed) {
 
   const message = await channel.send({ embeds: [embed] });
   monitor.messageId = message.id;
+  monitor.lastEmbed = fingerprint;
+  monitor.lastEditAt = Date.now();
   await updateMonitorMessage(CHANNEL_ID, message.id);
   console.log(`[BOT] Sent new status message (${message.id})`);
 }
@@ -117,12 +133,17 @@ async function tick() {
     clearError();
 
     // Reuse servers from this tick — no second DB fetch needed.
-    try {
-      client.user.setPresence({
-        activities: [{ name: buildPresenceText(servers), type: ActivityType.Watching }],
-        status: 'online',
-      });
-    } catch { /* non-fatal */ }
+    const presence = buildPresenceText(servers);
+    if (presence !== monitor.lastPresence || Date.now() - monitor.lastPresenceAt >= FORCE_REFRESH_MS) {
+      try {
+        client.user.setPresence({
+          activities: [{ name: presence, type: ActivityType.Watching }],
+          status: 'online',
+        });
+        monitor.lastPresence = presence;
+        monitor.lastPresenceAt = Date.now();
+      } catch { /* non-fatal */ }
+    }
   } catch (err) {
     // Lost access, unknown channel, Discord outage: retry next tick.
     reportError(err);
